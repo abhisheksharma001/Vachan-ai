@@ -1,0 +1,18 @@
+/* Card / Surface — doc 06 §6.5 #2. */
+.card {
+  background: var(--sand-100);
+  border: 1px solid var(--sand-300);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+}
+
+/* Interactive cards lift slightly on hover. */
+.interactive {
+  transition: box-shadow 180ms ease, transform 180ms ease;
+  cursor: pointer;
+}
+.interactive:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}

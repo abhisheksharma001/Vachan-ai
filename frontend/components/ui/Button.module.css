@@ -1,0 +1,57 @@
+/* Button — doc 06 §6.5 #1. Three variants, all states. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  padding: 12px 22px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 180ms ease, transform 180ms ease,
+    box-shadow 180ms ease;
+}
+.btn:disabled {
+  cursor: not-allowed;
+  background: var(--sand-400);
+  color: var(--sand-100);
+  box-shadow: none;
+  transform: none;
+  border-color: transparent;
+}
+
+/* Primary — coral, the call to action. */
+.primary {
+  background: var(--coral-500);
+  color: var(--sand-50);
+  box-shadow: var(--shadow-sm);
+}
+.primary:hover:not(:disabled) {
+  background: var(--coral-600);
+  transform: translateY(-1px);
+}
+.primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Secondary — sand surface with a border. */
+.secondary {
+  background: var(--sand-100);
+  border-color: var(--sand-300);
+  color: var(--ink-900);
+}
+.secondary:hover:not(:disabled) {
+  background: var(--sand-200);
+}
+
+/* Ghost — text-only coral. */
+.ghost {
+  background: transparent;
+  color: var(--coral-600);
+}
+.ghost:hover:not(:disabled) {
+  background: rgba(246, 169, 142, 0.2); /* coral-300 @ 20% */
+}

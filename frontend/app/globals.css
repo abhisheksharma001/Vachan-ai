@@ -1,0 +1,122 @@
+/*
+ * Vachan.ai design tokens — doc 06 §6.2 (Sandy + Coral).
+ * RULE: components NEVER hardcode hex. Always use these CSS variables.
+ * This is the single source of truth for the visual language.
+ */
+:root {
+  /* ── SAND (canvas & surfaces) ── */
+  --sand-50:  #FBF7F1;   /* lightest cream — page background */
+  --sand-100: #F6EEE3;   /* default surface / cards */
+  --sand-200: #EFE2D2;   /* raised surface, hover fill */
+  --sand-300: #E4D2BC;   /* borders, dividers */
+  --sand-400: #D2B896;   /* muted lines, disabled */
+  --sand-500: #B9966B;   /* deep sand / secondary text on light */
+
+  /* ── CORAL (the accent = "the voice") ── */
+  --coral-300: #F6A98E;
+  --coral-400: #F08A6B;
+  --coral-500: #EC6A4C;  /* PRIMARY coral — buttons, clone bubbles, ring */
+  --coral-600: #D7503A;  /* hover / pressed */
+  --coral-700: #B23D2C;  /* deep coral — text on sand when needed */
+
+  /* ── CORAL-SAND BLEND (signature gradient) ── */
+  --blend-warm: linear-gradient(135deg, #F3C9A8 0%, #EC6A4C 100%);
+  --blend-soft: linear-gradient(135deg, #F6EEE3 0%, #F6A98E 100%);
+
+  /* ── INK (text) ── */
+  --ink-900: #2C211A;    /* primary — warm near-black, NOT pure black */
+  --ink-700: #5A4A3D;    /* secondary */
+  --ink-500: #8A7563;    /* tertiary / captions */
+
+  /* ── SUPPORT / SEMANTIC ── */
+  --teal-500:  #2F8F83;  /* success / on-voice */
+  --amber-500: #C9852A;  /* warning / drifting */
+  --rose-600:  #B23D52;  /* error / off-voice / blocked */
+
+  /* ── SHADOWS (warm, soft) ── */
+  --shadow-sm: 0 1px 2px rgba(78, 52, 34, 0.06);
+  --shadow-md: 0 6px 20px rgba(78, 52, 34, 0.10);
+  --shadow-lg: 0 18px 50px rgba(78, 52, 34, 0.14);
+
+  /* ── RADII ── */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /* ── TYPE (wired to next/font CSS variables in layout.tsx) ── */
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-body: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* ── base reset ── */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body { padding: 0; margin: 0; }
+
+body {
+  background: var(--sand-50);
+  color: var(--ink-900);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--ink-900);
+  margin: 0;
+}
+h1 { font-size: clamp(44px, 6vw, 60px); line-height: 1.05; letter-spacing: -0.01em; }
+h2 { font-size: clamp(30px, 4vw, 36px); line-height: 1.1; }
+h3 { font-size: 22px; line-height: 1.2; }
+
+p { margin: 0; color: var(--ink-700); }
+
+a { color: var(--coral-700); text-decoration: none; }
+a:hover { color: var(--coral-600); }
+
+/* Visible, on-brand focus ring (§6.8 accessibility). */
+:focus-visible {
+  outline: 2px solid var(--coral-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Small uppercase label (§6.3). */
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+/* A pill chip used for status / section tags. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--sand-100);
+  border: 1px solid var(--sand-300);
+  color: var(--ink-700);
+}
+
+/* Respect reduced-motion globally (§6.7). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
