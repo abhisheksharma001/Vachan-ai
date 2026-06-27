@@ -17,8 +17,10 @@ services:
       POSTGRES_DB: vachan
     ports:
       - "5432:5432"
+    # Named volume (not a bind mount): `docker compose down -v` truly wipes it,
+    # so the DB really resets from scratch when you want a clean slate.
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vachan -d vachan"]
       interval: 5s
@@ -30,9 +32,13 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - ./redisdata:/data
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+volumes:
+  pgdata:
+  redisdata:

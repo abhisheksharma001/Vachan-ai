@@ -25,8 +25,10 @@ class Settings(BaseSettings):
     ENV: Literal["development", "production"] = "development"
 
     # ── Postgres ─────────────────────────────────────────────
-    # Async URL for the app; sync URL for Alembic migrations.
-    DATABASE_URL: str = "postgresql+psycopg://vachan:vachan@localhost:5432/vachan"
+    # Two roles by design (see migration 0001):
+    #   DATABASE_URL      → app role `vachan_app` (RLS APPLIES — request path).
+    #   DATABASE_URL_SYNC → owner role `vachan`   (migrations/provisioning).
+    DATABASE_URL: str = "postgresql+psycopg://vachan_app:vachan_app@localhost:5432/vachan"
     DATABASE_URL_SYNC: str = "postgresql+psycopg://vachan:vachan@localhost:5432/vachan"
 
     # ── Redis ────────────────────────────────────────────────
@@ -36,6 +38,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     SARVAM_API_KEY: str | None = None
     KIMI_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None
 
     # ── Auth ─────────────────────────────────────────────────
     # 'provider' = verify JWTs from a managed provider (production).

@@ -56,6 +56,14 @@ ALIAS_HAIKU = "haiku"
 ALIAS_SARVAM = "sarvam"
 ALIAS_KIMI = "kimi"
 
+# Groq-hosted aliases (verified live against GET /openai/v1/models, 2026-06-27).
+# Groq is our first wired+verified backend and hosts the FD-C6 Hinglish fallback
+# chain (Qwen3 → Llama 4). Real model IDs live in app.core.llm.ALIAS_TO_MODEL.
+ALIAS_GROQ = "groq"                    # general fast workhorse (Llama 3.3 70B)
+ALIAS_GROQ_FAST = "groq_fast"          # cheapest/fastest (Llama 3.1 8B instant)
+ALIAS_HINGLISH = "hinglish"            # Hinglish primary: Qwen3 (FD-16)
+ALIAS_HINGLISH_FALLBACK = "hinglish_fallback"  # Hinglish fallback: Llama 4 (FD-C6)
+
 # Explicit task-type → alias routing table (FD-10).
 # The caller tags the work; this map decides the model. A model may ADDITIONALLY
 # raise an escalate-to-opus flag, but the primary route is this table.
@@ -67,7 +75,9 @@ TASK_ROUTING: dict[str, str] = {
     # decision (FD I3), so Sonnet, not Haiku.
     "persona_generation": ALIAS_SONNET,
     "ghostwriter_rewrite": ALIAS_SONNET,
-    # Hinglish-heavy generation routes to Sarvam (fallbacks wired in LiteLLM).
+    # Hinglish-heavy generation → Sarvam-30b primary (FD-16). The LiteLLM router
+    # falls back Sarvam → Groq Qwen3 → Groq Llama 4 (FD-C6) so a single outage
+    # never blocks the demo.
     "hinglish_generation": ALIAS_SARVAM,
     # Deterministic / bulk work — feature extraction, summarization, formatting.
     "feature_extraction": ALIAS_HAIKU,
