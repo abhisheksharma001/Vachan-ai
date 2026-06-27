@@ -5,7 +5,7 @@
 > public classes/functions, and how modules depend on each other.
 > Ask questions against it with `tools/codewiki/ask.py` (see that file).
 
-_Generated 2026-06-27 22:48 • 25 modules • 1839 lines._
+_Generated 2026-06-28 00:00 • 29 modules • 2559 lines._
 
 ## Module dependency graph
 
@@ -18,6 +18,10 @@ graph LR
   app_api_health[app.api.health] --> app_core_redis_client[app.core.redis_client]
   app_api_messages[app.api.messages] --> app_channels_contract[app.channels.contract]
   app_api_messages[app.api.messages] --> app_core_auth[app.core.auth]
+  app_api_personas[app.api.personas] --> app_core_auth[app.core.auth]
+  app_api_personas[app.api.personas] --> app_core_db[app.core.db]
+  app_api_personas[app.api.personas] --> app_models_tables[app.models.tables]
+  app_api_personas[app.api.personas] --> app_tone_ingest[app.tone.ingest]
   app_channels_queue[app.channels.queue] --> app_channels_contract[app.channels.contract]
   app_channels_queue[app.channels.queue] --> app_core_redis_client[app.core.redis_client]
   app_core_auth[app.core.auth] --> app_core_config[app.core.config]
@@ -36,6 +40,10 @@ graph LR
   app_models___init__[app.models.__init__] --> app_models_tables[app.models.tables]
   app_models_tables[app.models.tables] --> app_core_constants[app.core.constants]
   app_models_tables[app.models.tables] --> app_models_base[app.models.base]
+  app_tone_ingest[app.tone.ingest] --> app_core_db[app.core.db]
+  app_tone_ingest[app.tone.ingest] --> app_core_pii[app.core.pii]
+  app_tone_ingest[app.tone.ingest] --> app_models_tables[app.models.tables]
+  app_tone_ingest[app.tone.ingest] --> app_tone_features[app.tone.features]
   app_workers_echo_worker[app.workers.echo_worker] --> app_channels_contract[app.channels.contract]
   app_workers_echo_worker[app.workers.echo_worker] --> app_core_db[app.core.db]
   app_workers_echo_worker[app.workers.echo_worker] --> app_core_pii[app.core.pii]
@@ -92,6 +100,23 @@ Message ingress — the web channel's front door (docs/05 §5.3).
 - `async def ingest_message(body: IngressRequest, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
 
 - `async def get_reply(idempotency_key: str, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
+
+### `app.api.personas`
+_backend/app/api/personas.py · 190 lines_
+
+Personas API — create a persona, feed it your writing, read its style back.
+
+**Depends on:** `app.core.auth`, `app.core.db`, `app.models.tables`, `app.tone.ingest`
+
+- **class `CreatePersonaRequest`(BaseModel)** — 
+
+- **class `CaptureRequest`(BaseModel)** — 
+
+- `async def create_persona(body: CreatePersonaRequest, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
+
+- `async def capture_writing(persona_id: str, body: CaptureRequest, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
+
+- `async def get_persona(persona_id: str, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
 
 ### `app.channels.__init__`
 _backend/app/channels/__init__.py · 8 lines_
@@ -250,7 +275,7 @@ Dev seed — bootstrap a demo org/user/persona/consent + a dev JWT.
 - `async def seed_demo(name: str='Demo Co') -> DemoSeed` — Create a fresh, isolated demo tenant and return its ids + a dev token.
 
 ### `app.main`
-_backend/app/main.py · 36 lines_
+_backend/app/main.py · 38 lines_
 
 FastAPI application factory.
 
@@ -303,6 +328,46 @@ SQLAlchemy ORM models for all Phase-0 tables (PRD §9 + FD overrides).
 _backend/app/tone/__init__.py · 9 lines_
 
 Tone Engine — Layer 3 (the core IP). Intentionally empty in Phase 0.
+
+### `app.tone.capture`
+_backend/app/tone/capture.py · 125 lines_
+
+CAPTURE — turn raw pasted/exported text into the target person's own turns.
+
+- `def parse_whatsapp(raw: str) -> list[tuple[str, str]]` — Parse a WhatsApp `.txt` export into ordered (sender, message) pairs.
+
+- `def senders(parsed: list[tuple[str, str]]) -> Counter` — Count messages per sender — lets the UI ask 'which one is you?'.
+
+- `def author_messages(parsed: list[tuple[str, str]], author_name: str) -> list[str]` — Keep only the target author's messages (case-insensitive name match).
+
+- `def parse_pasted(raw: str) -> list[str]` — Split pasted history into turns. The user pastes THEIR OWN writing, so every
+
+### `app.tone.features`
+_backend/app/tone/features.py · 240 lines_
+
+STYLE METRICS — the cheap stylometric floor (doc 03 §3.2a) + Hinglish (doc 08).
+
+- **class `MessageFeatures`** — Per-message stylometric + Hinglish features (mirrors the obs columns).
+  - `def as_obs_columns(self) -> dict`
+
+- `def message_features(text: str) -> MessageFeatures` — Compute the full feature bundle for ONE message.
+
+- `def aggregate_features(messages: list[str]) -> dict` — Corpus-level style summary across many messages — the basis for the capsule
+
+### `app.tone.ingest`
+_backend/app/tone/ingest.py · 163 lines_
+
+INGEST — capture's storage step: sanitize → measure → store observations.
+
+**Depends on:** `app.core.db`, `app.core.pii`, `app.models.tables`, `app.tone.features`
+
+- **class `CaptureResult`** — 
+
+- `def cold_start_band(total_tokens: int) -> str` — FD-4 honesty bands. Never present a thin clone as high-fidelity.
+
+- `async def ingest_messages(session: AsyncSession, *, org_id: str, persona_id: str, consent_id: str, messages: list[str], source_type: str) -> tuple[int, int, list[str]]` — Sanitize + measure + store each message as a persona_observation.
+
+- `async def run_capture(*, org_id: str, persona_id: str, consent_id: str, raw_text: str, source_type: str, author_name: str | None=None) -> CaptureResult` — Full capture: parse → sanitize → store → re-band the persona.
 
 ### `app.workers.__init__`
 _backend/app/workers/__init__.py · 9 lines_

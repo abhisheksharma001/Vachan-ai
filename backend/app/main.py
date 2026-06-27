@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from app.api import auth as auth_api
 from app.api import health
 from app.api import messages as messages_api
+from app.api import personas as personas_api
 from app.core.auth import assert_dev_auth_allowed
 from app.core.config import get_settings
 
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth_api.router)
     app.include_router(messages_api.router)
+    app.include_router(personas_api.router)
     return app
 
 
