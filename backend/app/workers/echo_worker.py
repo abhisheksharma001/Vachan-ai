@@ -35,7 +35,7 @@ from app.channels import queue
 from app.channels.contract import InboundMessage, OutboundMessage
 from app.core import constants as C
 from app.core.db import org_scoped_session
-from app.core.pii import sanitize
+from app.core.pii import sanitize_structured
 from app.models.tables import AuditLog, Consent, Persona, PersonaObservation
 
 
@@ -78,8 +78,9 @@ async def process(inbound: InboundMessage) -> OutboundMessage:
     if not text:
         return _reply("(empty message — nothing to echo)", stored=False, reason="empty_text")
 
-    # RULE 6: scrub PII BEFORE the text is hashed, stored, or echoed.
-    scrubbed = sanitize(text).text
+    # RULE 6: scrub PII BEFORE the text is hashed, stored, or echoed. Use the
+    # Hinglish-safe structured sanitizer so Hindi words aren't mauled by NER.
+    scrubbed = sanitize_structured(text).text
 
     async with org_scoped_session(inbound.tenant_id) as session:
         # Persona must belong to this org. RLS makes a cross-org id return None.

@@ -135,3 +135,23 @@ PII_ENTITY_UPI_ID = "UPI_ID"
 PII_ENTITY_AADHAAR = "AADHAAR_ADJACENT"
 PII_ENTITY_PAN = "PAN"
 PII_ENTITY_IFSC = "IFSC"
+
+# Structured, HIGH-PRECISION entities used on the Hinglish paths (capture + chat).
+# We deliberately EXCLUDE the spaCy NER entities (PERSON/ORG/LOCATION/DATE_TIME):
+# on romanized Hinglish they fire on ordinary Hindi words ("yaar"→PERSON,
+# "kaam"→ORG, "hai"→LOCATION) and DESTROY the very style signal we capture —
+# the documented "language_collapse" failure. FD-12: NER on Indian text is weak;
+# structured PII is the guarantee, and GLiNER for names is a later evaluation.
+# These cover the real risks: phone, UPI, Aadhaar, PAN, IFSC, email, card, etc.
+PII_STRUCTURED_ENTITIES = (
+    PII_ENTITY_IN_PHONE,
+    PII_ENTITY_UPI_ID,
+    PII_ENTITY_AADHAAR,
+    PII_ENTITY_PAN,
+    PII_ENTITY_IFSC,
+    "EMAIL_ADDRESS",
+    "CREDIT_CARD",
+    "IP_ADDRESS",
+    "IBAN_CODE",
+    "CRYPTO",
+)

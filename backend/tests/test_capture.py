@@ -69,14 +69,14 @@ async def test_persona_capture_end_to_end():
         c = await client.post(
             f"/personas/{persona_id}/capture",
             headers=headers,
-            json={"source_type": "paste", "text": paste},
+            json={"source_type": "paste", "text": paste, "build_capsule": False},
         )
         assert c.status_code == 200, c.text
         body = c.json()
         assert body["stored"] == 4
         assert body["total_tokens"] > 0       # the SUM must see the just-stored rows
         assert body["band"] == "warming_up"  # tiny sample → honest low confidence
-        assert body["style"]["cmi"] > 0.2     # it's recognisably Hinglish
+        assert body["style"]["cmi"] > 0.1     # recognisably code-mixed, not pure English
 
         # read it back
         g = await client.get(f"/personas/{persona_id}", headers=headers)

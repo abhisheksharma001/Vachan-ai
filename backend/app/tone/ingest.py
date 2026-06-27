@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import constants as C
 from app.core.db import org_scoped_session
-from app.core.pii import sanitize
+from app.core.pii import sanitize_structured
 from app.models.tables import Persona, PersonaObservation
 from app.tone import capture
 from app.tone.features import aggregate_features, message_features
@@ -70,7 +70,7 @@ async def ingest_messages(
     """
     stored, skipped, sanitized_all = 0, 0, []
     for raw in messages:
-        scrubbed = sanitize(raw).text.strip()
+        scrubbed = sanitize_structured(raw).text.strip()
         if not scrubbed:
             skipped += 1
             continue

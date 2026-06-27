@@ -5,7 +5,7 @@
 > public classes/functions, and how modules depend on each other.
 > Ask questions against it with `tools/codewiki/ask.py` (see that file).
 
-_Generated 2026-06-28 00:00 • 29 modules • 2559 lines._
+_Generated 2026-06-28 00:09 • 30 modules • 2950 lines._
 
 ## Module dependency graph
 
@@ -21,6 +21,7 @@ graph LR
   app_api_personas[app.api.personas] --> app_core_auth[app.core.auth]
   app_api_personas[app.api.personas] --> app_core_db[app.core.db]
   app_api_personas[app.api.personas] --> app_models_tables[app.models.tables]
+  app_api_personas[app.api.personas] --> app_tone_capsule[app.tone.capsule]
   app_api_personas[app.api.personas] --> app_tone_ingest[app.tone.ingest]
   app_channels_queue[app.channels.queue] --> app_channels_contract[app.channels.contract]
   app_channels_queue[app.channels.queue] --> app_core_redis_client[app.core.redis_client]
@@ -40,6 +41,11 @@ graph LR
   app_models___init__[app.models.__init__] --> app_models_tables[app.models.tables]
   app_models_tables[app.models.tables] --> app_core_constants[app.core.constants]
   app_models_tables[app.models.tables] --> app_models_base[app.models.base]
+  app_tone_capsule[app.tone.capsule] --> app_core_db[app.core.db]
+  app_tone_capsule[app.tone.capsule] --> app_core_llm[app.core.llm]
+  app_tone_capsule[app.tone.capsule] --> app_models_tables[app.models.tables]
+  app_tone_capsule[app.tone.capsule] --> app_tone_features[app.tone.features]
+  app_tone_capsule[app.tone.capsule] --> app_tone_ingest[app.tone.ingest]
   app_tone_ingest[app.tone.ingest] --> app_core_db[app.core.db]
   app_tone_ingest[app.tone.ingest] --> app_core_pii[app.core.pii]
   app_tone_ingest[app.tone.ingest] --> app_models_tables[app.models.tables]
@@ -102,11 +108,11 @@ Message ingress — the web channel's front door (docs/05 §5.3).
 - `async def get_reply(idempotency_key: str, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
 
 ### `app.api.personas`
-_backend/app/api/personas.py · 190 lines_
+_backend/app/api/personas.py · 236 lines_
 
 Personas API — create a persona, feed it your writing, read its style back.
 
-**Depends on:** `app.core.auth`, `app.core.db`, `app.models.tables`, `app.tone.ingest`
+**Depends on:** `app.core.auth`, `app.core.db`, `app.models.tables`, `app.tone.capsule`, `app.tone.ingest`
 
 - **class `CreatePersonaRequest`(BaseModel)** — 
 
@@ -117,6 +123,8 @@ Personas API — create a persona, feed it your writing, read its style back.
 - `async def capture_writing(persona_id: str, body: CaptureRequest, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
 
 - `async def get_persona(persona_id: str, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
+
+- `async def get_capsule(persona_id: str, auth: AuthContext=Depends(get_current_auth)) -> dict` — Return the latest persona capsule (capsule_data + rendered persona.md).
 
 ### `app.channels.__init__`
 _backend/app/channels/__init__.py · 8 lines_
@@ -196,7 +204,7 @@ Application settings, loaded from environment / `.env`.
 - `def get_settings() -> Settings` — Cached singleton so we parse the environment exactly once.
 
 ### `app.core.constants`
-_backend/app/core/constants.py · 138 lines_
+_backend/app/core/constants.py · 158 lines_
 
 Project-wide constants — the single source of truth for values that must
 
@@ -237,7 +245,7 @@ LiteLLM gateway — the single place that maps our model ALIASES to real,
 - `async def smoke_completion() -> str` — Phase-0 Anthropic DoD: route a test prompt to Sonnet (needs Anthropic key).
 
 ### `app.core.pii`
-_backend/app/core/pii.py · 186 lines_
+_backend/app/core/pii.py · 202 lines_
 
 PII sanitizer — RULE 6: this runs BEFORE any data reaches any model.
 
@@ -248,6 +256,8 @@ PII sanitizer — RULE 6: this runs BEFORE any data reaches any model.
 - `def sanitize(text: str, entities: list[str] | None=None, score_threshold: float=0.4) -> SanitizationResult` — Redact PII from `text`, replacing each detected span with `[ENTITY_TYPE]`.
 
 - `def redact(text: str) -> str` — Convenience: return only the redacted text.
+
+- `def sanitize_structured(text: str) -> SanitizationResult` — Hinglish-safe sanitize: redact only HIGH-PRECISION structured PII
 
 ### `app.core.redis_client`
 _backend/app/core/redis_client.py · 26 lines_
@@ -329,6 +339,17 @@ _backend/app/tone/__init__.py · 9 lines_
 
 Tone Engine — Layer 3 (the core IP). Intentionally empty in Phase 0.
 
+### `app.tone.capsule`
+_backend/app/tone/capsule.py · 308 lines_
+
+CAPSULE — project the observation log into a Persona Capsule (doc 03 §3.3).
+
+**Depends on:** `app.core.db`, `app.core.llm`, `app.models.tables`, `app.tone.features`, `app.tone.ingest`
+
+- `def render_yaml(persona: Persona, capsule: dict) -> str` — Render the human-readable persona.md (YAML front-matter + Markdown body).
+
+- `async def build_capsule(*, org_id: str, persona_id: str, consent_id: str, sanitized_exemplars: list[str]) -> dict` — Project the current observation log into a new capsule version and store it.
+
 ### `app.tone.capture`
 _backend/app/tone/capture.py · 125 lines_
 
@@ -375,7 +396,7 @@ _backend/app/workers/__init__.py · 9 lines_
 Workers — Layer that drains the ingress queue and runs the engine.
 
 ### `app.workers.echo_worker`
-_backend/app/workers/echo_worker.py · 169 lines_
+_backend/app/workers/echo_worker.py · 170 lines_
 
 Echo worker — Phase 0's proof that the whole pipeline is real, not faked.
 

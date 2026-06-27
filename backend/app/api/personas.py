@@ -19,7 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import constants as C
 from app.core.auth import AuthContext, get_current_auth
 from app.core.db import org_scoped_session
-from app.models.tables import Consent, Org, Persona, PersonaObservation, User
+from app.models.tables import (
+    Consent,
+    Org,
+    Persona,
+    PersonaCapsule,
+    PersonaObservation,
+    User,
+)
+from app.tone.capsule import build_capsule
 from app.tone.ingest import run_capture
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -35,6 +43,9 @@ class CaptureRequest(BaseModel):
     text: str = Field(..., description="Pasted writing, or a WhatsApp .txt export")
     author_name: str | None = Field(
         None, description="For WhatsApp: whose turns are yours (sender name)"
+    )
+    build_capsule: bool = Field(
+        True, description="Project a fresh persona capsule from the new writing"
     )
 
 
@@ -128,7 +139,7 @@ async def capture_writing(
         source_type=body.source_type,
         author_name=body.author_name,
     )
-    return {
+    response = {
         "persona_id": result.persona_id,
         "stored": result.stored,
         "skipped": result.skipped,
@@ -136,6 +147,15 @@ async def capture_writing(
         "band": result.band,
         "style": result.aggregate,
     }
+    # Project a fresh capsule from the just-captured (in-memory, sanitized) text.
+    if body.build_capsule and result.sanitized:
+        response["capsule"] = await build_capsule(
+            org_id=auth.org_id,
+            persona_id=persona_id,
+            consent_id=consent_id,
+            sanitized_exemplars=result.sanitized,
+        )
+    return response
 
 
 @router.get("/{persona_id}")
@@ -177,6 +197,7 @@ async def get_persona(
         "name": persona.name,
         "status": persona.status,
         "language_primary": persona.language_primary,
+        "current_capsule_version": persona.current_capsule_version,
         "observations": int(count),
         "total_tokens": int(tokens),
         "style": {
@@ -186,4 +207,29 @@ async def get_persona(
             "avg_sentence_len": _r(sent_len),
             "vocab_richness": _r(vocab),
         },
+    }
+
+
+@router.get("/{persona_id}/capsule")
+async def get_capsule(
+    persona_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Return the latest persona capsule (capsule_data + rendered persona.md)."""
+    async with org_scoped_session(auth.org_id) as session:
+        capsule = (
+            await session.execute(
+                select(PersonaCapsule)
+                .where(PersonaCapsule.persona_id == persona_id)
+                .order_by(PersonaCapsule.version.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if capsule is None:
+        raise HTTPException(status_code=404, detail="No capsule yet — capture some writing first.")
+    return {
+        "persona_id": persona_id,
+        "version": capsule.version,
+        "capsule_data": capsule.capsule_data,
+        "yaml_rendered": capsule.yaml_rendered,
     }

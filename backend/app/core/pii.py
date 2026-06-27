@@ -183,3 +183,19 @@ def sanitize(
 def redact(text: str) -> str:
     """Convenience: return only the redacted text."""
     return sanitize(text).text
+
+
+def sanitize_structured(text: str) -> SanitizationResult:
+    """
+    Hinglish-safe sanitize: redact only HIGH-PRECISION structured PII
+    (phone/UPI/Aadhaar/PAN/IFSC/email/card — C.PII_STRUCTURED_ENTITIES) and
+    SKIP the spaCy NER entities (PERSON/ORG/LOCATION).
+
+    Why a separate path (RULE 6 still holds): on romanized Hindi, the English
+    NER mislabels ordinary words ("yaar"→PERSON, "kaam"→ORG) and shreds the
+    style signal we're trying to capture — while still missing many real Indian
+    names (FD-12). So on the Hinglish paths we rely on the structured guarantee;
+    name redaction via GLiNER is a planned later evaluation, not a dependency.
+    The real exposure (numbers, handles, cards) is still removed.
+    """
+    return sanitize(text, entities=list(C.PII_STRUCTURED_ENTITIES))
