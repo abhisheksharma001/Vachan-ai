@@ -111,6 +111,26 @@ CMI_CONFORMANCE_TOLERANCE = 0.05
 
 
 # ════════════════════════════════════════════════════════════════════
+# PERSONA FIDELITY SCORE — PFS  (doc 03 §3.5 — "does it sound like them?")
+# ════════════════════════════════════════════════════════════════════
+# Three ORTHOGONAL signals, combined; never trust one alone. The weights are
+# FD-locked from the composite:
+#     PFS = 0.5*AV_cosine + 0.2*(1 - centroid_distance) + 0.3*(judge/5)
+# AV_cosine + centroid_distance are NEURAL (mStyleDistance) and land in Slice
+# 1.5. Until then PFS runs PROVISIONAL from the judge alone (renormalized) and
+# is flagged `pfs_basis="judge_only"` — we never fabricate a cosine we can't
+# measure (RULE 5).
+PFS_WEIGHT_AV_COSINE = 0.5
+PFS_WEIGHT_CENTROID = 0.2
+PFS_WEIGHT_JUDGE = 0.3
+
+# Hard gate: a reply scoring below this is regenerated / escalated to a human.
+# Sustained inability to clear it for a high-value persona is the documented
+# trigger to design a Path-B (control-vector / LoRA) upgrade (doc 03 §3.4).
+PFS_GATE_THRESHOLD = 0.78
+
+
+# ════════════════════════════════════════════════════════════════════
 # MESSAGE PIPELINE  (docs/05 — channel names + observation source types)
 # ════════════════════════════════════════════════════════════════════
 # Channel identifiers. The normalized contract (channels/contract.py) and every

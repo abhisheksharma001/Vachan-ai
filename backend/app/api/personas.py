@@ -28,6 +28,7 @@ from app.models.tables import (
     User,
 )
 from app.tone.capsule import build_capsule
+from app.tone.fidelity import score_reply
 from app.tone.ingest import run_capture
 from app.tone.renderer import render_reply
 
@@ -58,6 +59,9 @@ class ChatTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="What you say to your clone")
     history: list[ChatTurn] = Field(default_factory=list, description="Prior turns")
+    score: bool = Field(
+        True, description="Also score the reply's fidelity (the Ring). One cheap extra call."
+    )
 
 
 async def _ensure_tenant(session: AsyncSession, auth: AuthContext) -> None:
@@ -276,9 +280,15 @@ async def chat_with_clone(
         body.message,
         history=[t.model_dump() for t in body.history],
     )
-    return {
+    response = {
         "persona_id": persona_id,
         "capsule_version": capsule.version,
         "band": capsule.capsule_data.get("band"),
         "reply": reply,
     }
+    # Score the reply so the Mirror can show the Fidelity Ring (doc 03 §3.5).
+    # av_cosine/centroid_distance stay None until the neural fingerprint (1.5),
+    # so PFS comes back PROVISIONAL (judge-only) and clearly flagged.
+    if body.score:
+        response["fidelity"] = (await score_reply(capsule.capsule_data, reply)).as_dict()
+    return response
