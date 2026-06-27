@@ -1,0 +1,38 @@
+# ════════════════════════════════════════════════════════════════
+# Vachan.ai — local infrastructure for Phase 0.
+#
+# n8n analogy: this file is like the "credentials + service nodes" tab —
+# it stands up the two backing services (Postgres, Redis) the app talks to,
+# so you don't install them by hand. Bring it up with:  docker compose up -d
+# ════════════════════════════════════════════════════════════════
+services:
+  # Postgres WITH the pgvector extension preinstalled (pgvector/pgvector image).
+  # We store style fingerprints as VECTOR columns, so a plain postgres image
+  # would be missing the `vector` type. This image ships it.
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: vachan
+      POSTGRES_PASSWORD: vachan
+      POSTGRES_DB: vachan
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vachan -d vachan"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

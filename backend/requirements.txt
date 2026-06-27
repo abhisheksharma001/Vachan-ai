@@ -1,0 +1,38 @@
+# ── Vachan.ai backend — Phase 0 dependencies ──────────────────────
+# Version floors are known-good minimums (not exact pins) so a fresh
+# install picks a compatible recent release. Pin exactly before V1.
+
+# Web framework + server
+fastapi>=0.111
+uvicorn[standard]>=0.30
+
+# Settings + validation (capsule schema uses Pydantic in Phase 1)
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# Database: async SQLAlchemy + psycopg3 + Alembic + pgvector type
+SQLAlchemy[asyncio]>=2.0.30
+psycopg[binary]>=3.2
+alembic>=1.13
+pgvector>=0.3.0
+
+# Session cache
+redis>=5.0
+
+# LLM gateway (FD-5: aliases mapped to real IDs in litellm_config.yaml)
+litellm>=1.40
+
+# PII sanitizer (RULE 6) — Presidio + spaCy NER.
+# Structured Indian PII (phone/UPI/Aadhaar/PAN/IFSC) is pure regex and
+# needs no model; spaCy is only for name/location NER.
+presidio-analyzer>=2.2
+spacy>=3.7
+
+# Auth: verify JWTs from a managed provider (FD: do not hand-roll issuance).
+# [crypto] pulls cryptography for RS256/JWKS verification.
+PyJWT[crypto]>=2.8
+httpx>=0.27
+
+# Tests
+pytest>=8.2
+pytest-asyncio>=0.23
