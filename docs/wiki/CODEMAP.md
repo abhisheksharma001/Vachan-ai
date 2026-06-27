@@ -5,7 +5,7 @@
 > public classes/functions, and how modules depend on each other.
 > Ask questions against it with `tools/codewiki/ask.py` (see that file).
 
-_Generated 2026-06-27 18:42 • 18 modules • 1255 lines._
+_Generated 2026-06-27 22:48 • 25 modules • 1839 lines._
 
 ## Module dependency graph
 
@@ -16,18 +16,30 @@ graph LR
   app_api_health[app.api.health] --> app_core_db[app.core.db]
   app_api_health[app.api.health] --> app_core_llm[app.core.llm]
   app_api_health[app.api.health] --> app_core_redis_client[app.core.redis_client]
+  app_api_messages[app.api.messages] --> app_channels_contract[app.channels.contract]
+  app_api_messages[app.api.messages] --> app_core_auth[app.core.auth]
+  app_channels_queue[app.channels.queue] --> app_channels_contract[app.channels.contract]
+  app_channels_queue[app.channels.queue] --> app_core_redis_client[app.core.redis_client]
   app_core_auth[app.core.auth] --> app_core_config[app.core.config]
   app_core_auth[app.core.auth] --> app_core_db[app.core.db]
   app_core_db[app.core.db] --> app_core_config[app.core.config]
   app_core_llm[app.core.llm] --> app_core_config[app.core.config]
   app_core_pii[app.core.pii] --> app_core_config[app.core.config]
   app_core_redis_client[app.core.redis_client] --> app_core_config[app.core.config]
+  app_dev_seed[app.dev.seed] --> app_core_auth[app.core.auth]
+  app_dev_seed[app.dev.seed] --> app_core_config[app.core.config]
+  app_dev_seed[app.dev.seed] --> app_core_db[app.core.db]
+  app_dev_seed[app.dev.seed] --> app_models_tables[app.models.tables]
   app_main[app.main] --> app_core_auth[app.core.auth]
   app_main[app.main] --> app_core_config[app.core.config]
   app_models___init__[app.models.__init__] --> app_models_base[app.models.base]
   app_models___init__[app.models.__init__] --> app_models_tables[app.models.tables]
   app_models_tables[app.models.tables] --> app_core_constants[app.core.constants]
   app_models_tables[app.models.tables] --> app_models_base[app.models.base]
+  app_workers_echo_worker[app.workers.echo_worker] --> app_channels_contract[app.channels.contract]
+  app_workers_echo_worker[app.workers.echo_worker] --> app_core_db[app.core.db]
+  app_workers_echo_worker[app.workers.echo_worker] --> app_core_pii[app.core.pii]
+  app_workers_echo_worker[app.workers.echo_worker] --> app_models_tables[app.models.tables]
 ```
 
 ## Modules
@@ -68,10 +80,58 @@ GET /health — Phase-0 Definition of Done.
 
 - `async def health() -> dict[str, str]` — 
 
+### `app.api.messages`
+_backend/app/api/messages.py · 94 lines_
+
+Message ingress — the web channel's front door (docs/05 §5.3).
+
+**Depends on:** `app.channels.contract`, `app.core.auth`
+
+- **class `IngressRequest`(BaseModel)** — The web channel's inbound payload (other channels have their own adapters).
+
+- `async def ingest_message(body: IngressRequest, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
+
+- `async def get_reply(idempotency_key: str, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
+
 ### `app.channels.__init__`
 _backend/app/channels/__init__.py · 8 lines_
 
 Channel Layer — Layer 1 adapters. Intentionally empty in Phase 0.
+
+### `app.channels.contract`
+_backend/app/channels/contract.py · 106 lines_
+
+The normalized message contract (docs/05 §5.2) — build this FIRST.
+
+- **class `MediaRef`** — A pointer to a media object (NOT the raw bytes). Phase 1 wires storage.
+
+- **class `InboundMessage`** — The one shape every inbound message becomes, regardless of channel.
+  - `def to_json(self) -> str`
+  - `def from_json(cls, blob: str) -> InboundMessage`
+  - `def partition_key(self) -> str`
+
+- **class `OutboundMessage`** — The one shape every reply leaves the engine as, before an adapter formats
+  - `def to_json(self) -> str`
+  - `def from_json(cls, blob: str) -> OutboundMessage`
+
+### `app.channels.queue`
+_backend/app/channels/queue.py · 86 lines_
+
+Ingress queue (Redis) — the async buffer between webhook and worker.
+
+**Depends on:** `app.channels.contract`, `app.core.redis_client`
+
+- `async def mark_seen(idempotency_key: str) -> bool` — Record an inbound message id, returning True only the FIRST time.
+
+- `async def enqueue(msg: InboundMessage) -> None` — Append a normalized inbound message to the FIFO queue.
+
+- `async def dequeue(timeout: int=5) -> InboundMessage | None` — Block up to `timeout` seconds for the next message; None if the queue
+
+- `async def queue_depth() -> int` — How many messages are waiting (used by tests / health).
+
+- `async def store_result(idempotency_key: str, reply: OutboundMessage) -> None` — Cache the worker's reply so the ingress GET endpoint can return it.
+
+- `async def get_result(idempotency_key: str) -> OutboundMessage | None` — Fetch a cached reply, or None if the worker hasn't processed it yet.
 
 ### `app.core.__init__`
 _backend/app/core/__init__.py · 2 lines_
@@ -111,7 +171,7 @@ Application settings, loaded from environment / `.env`.
 - `def get_settings() -> Settings` — Cached singleton so we parse the environment exactly once.
 
 ### `app.core.constants`
-_backend/app/core/constants.py · 123 lines_
+_backend/app/core/constants.py · 138 lines_
 
 Project-wide constants — the single source of truth for values that must
 
@@ -173,8 +233,24 @@ Redis client (async) + health probe.
 
 - `async def ping_redis() -> bool` — Health probe: returns True if Redis answers PING.
 
+### `app.dev.__init__`
+_backend/app/dev/__init__.py · 2 lines_
+
+Developer-only helpers (seeding, fixtures). Never imported on the prod path.
+
+### `app.dev.seed`
+_backend/app/dev/seed.py · 101 lines_
+
+Dev seed — bootstrap a demo org/user/persona/consent + a dev JWT.
+
+**Depends on:** `app.core.auth`, `app.core.config`, `app.core.db`, `app.models.tables`
+
+- **class `DemoSeed`** — 
+
+- `async def seed_demo(name: str='Demo Co') -> DemoSeed` — Create a fresh, isolated demo tenant and return its ids + a dev token.
+
 ### `app.main`
-_backend/app/main.py · 34 lines_
+_backend/app/main.py · 36 lines_
 
 FastAPI application factory.
 
@@ -227,6 +303,24 @@ SQLAlchemy ORM models for all Phase-0 tables (PRD §9 + FD overrides).
 _backend/app/tone/__init__.py · 9 lines_
 
 Tone Engine — Layer 3 (the core IP). Intentionally empty in Phase 0.
+
+### `app.workers.__init__`
+_backend/app/workers/__init__.py · 9 lines_
+
+Workers — Layer that drains the ingress queue and runs the engine.
+
+### `app.workers.echo_worker`
+_backend/app/workers/echo_worker.py · 169 lines_
+
+Echo worker — Phase 0's proof that the whole pipeline is real, not faked.
+
+**Depends on:** `app.channels.contract`, `app.core.db`, `app.core.pii`, `app.models.tables`
+
+- `async def process(inbound: InboundMessage) -> OutboundMessage` — Run one message through the real gates and return the reply.
+
+- `async def process_one(timeout: int=5) -> OutboundMessage | None` — Pop one message, process it, cache the reply. Returns the reply, or None if
+
+- `async def run() -> None` — Drain the queue forever. One bad message never kills the loop.
 
 ## Conceptual docs (the 'why')
 

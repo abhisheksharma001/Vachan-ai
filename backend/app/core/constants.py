@@ -111,6 +111,21 @@ CMI_CONFORMANCE_TOLERANCE = 0.05
 
 
 # ════════════════════════════════════════════════════════════════════
+# MESSAGE PIPELINE  (docs/05 — channel names + observation source types)
+# ════════════════════════════════════════════════════════════════════
+# Channel identifiers. The normalized contract (channels/contract.py) and every
+# adapter reference these, never bare strings. Web is the only Phase-0 channel
+# (FD/§5.7: Web Mirror first, then Telegram, then WhatsApp).
+CHANNEL_WEB = "web"
+CHANNEL_TELEGRAM = "telegram"
+CHANNEL_WHATSAPP = "whatsapp"
+
+# persona_observations.source_type — where a stored writing sample came from.
+SOURCE_TYPE_CHAT = "chat"            # a live conversation turn (Phase 0 echo flow)
+SOURCE_TYPE_PASTED_HISTORY = "pasted_history"  # bulk paste/upload capture (Phase 1)
+
+
+# ════════════════════════════════════════════════════════════════════
 # PII ENTITY LABELS  (RULE 6 — used by the sanitizer and its tests)
 # ════════════════════════════════════════════════════════════════════
 # Custom Indian structured-PII entities (high-precision regex). Each detected

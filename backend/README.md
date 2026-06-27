@@ -7,9 +7,13 @@ This is the **foundation only** — no Tone Engine features yet (those are Phase
 - All 10 Postgres tables via Alembic, with **Row-Level Security**, **append-only**
   triggers (persona_observations, persona_capsules), and an **immutable** audit_log.
 - A **PII sanitizer** (Presidio + custom Indian patterns) that runs before any model.
-- A **LiteLLM gateway** with aliases → verified model IDs (opus/sonnet/haiku).
+- A **LiteLLM gateway** with aliases → verified model IDs (opus/sonnet/haiku/sarvam/groq).
 - **Auth**: managed-provider JWT verification (production) + a dev-only local issuer.
-- `GET /health`.
+- The **message pipeline** (the Phase-0 magic-moment proof): a message flows
+  `web → ingress → Redis queue → worker → echo back`, the worker enforces
+  **consent** + **PII sanitize**, and a sanitized sample lands in
+  `persona_observations` (only a SHA-256 hash is stored — never the raw text).
+- `GET /health`, `POST /messages`, `GET /messages/{id}`.
 
 ## Prerequisites
 - Docker (for Postgres + Redis), Python 3.11+.
@@ -52,7 +56,7 @@ This is what makes the "org A can't read org B" guarantee real rather than a no-
 ## Tests
 ```bash
 cd backend
-./.venv/bin/python -m pytest          # PII + RLS isolation; live LLM test skips without a key
+./.venv/bin/python -m pytest          # PII + RLS + pipeline (DoD); live LLM tests skip without a key
 ```
 
 ## Auth (local testing)
@@ -67,6 +71,26 @@ curl 127.0.0.1:8000/auth/me -H "Authorization: Bearer <token>"
 For production, set `AUTH_MODE=provider` + `AUTH_JWKS_URL`/`AUTH_ISSUER`/`AUTH_AUDIENCE`
 from your managed provider (Supabase Auth / Clerk / Auth.js). The dev issuer refuses
 to run when `ENV=production`.
+
+## Try the message pipeline end-to-end (the Phase-0 "Done when")
+A message must flow `web → ingress → queue → worker → echo`, and a sanitized
+sample must land in `persona_observations`. Two processes — the API and the worker:
+```bash
+# Terminal A — API
+cd backend && ./.venv/bin/uvicorn app.main:app --reload --port 8000
+
+# Terminal B — the worker that drains the queue (no LLM in Phase 0; it echoes)
+cd backend && ./.venv/bin/python -m app.workers.echo_worker
+
+# Terminal C — seed a demo org/persona/consent + dev token, then it prints a
+# ready-to-run curl that posts a message containing PII:
+cd backend && ./.venv/bin/python -m app.dev.seed
+```
+Post returns `202 {"idempotency_key": ...}` instantly (the async-ingress rule:
+never block the webhook on a model). The worker scrubs PII, stores the hash, and
+caches an echo; fetch it with `GET /messages/<idempotency_key>`. The echo comes
+back with phone/UPI replaced by `[IN_PHONE]`/`[UPI_ID]` — proof the scrub ran
+before anything was stored.
 
 ## Reset the database from scratch
 ```bash
