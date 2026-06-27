@@ -9,7 +9,9 @@
  * The LIVE Mirror — wired to POST /messages with the Fidelity Ring + sliders —
  * is Phase 1 (doc 06 §6.6 #3). We keep the phase boundary clean on purpose.
  */
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import buttonStyles from "@/components/ui/Button.module.css";
 import { Card } from "@/components/ui/Card";
 import { ChatBubble, TypingBubble } from "@/components/vachan/ChatBubble";
 import styles from "./page.module.css";
@@ -33,7 +35,9 @@ export default function Home() {
         <div className={styles.wordmark}>
           Vachan<span>.</span>ai
         </div>
-        <span className="chip">Phase 0 · design system</span>
+        <Link href="/mirror" className={`${buttonStyles.btn} ${buttonStyles.ghost}`}>
+          Open the Mirror →
+        </Link>
       </nav>
 
       {/* hero (§6.6 #1) */}
@@ -47,8 +51,12 @@ export default function Home() {
             unmistakably like you.
           </p>
           <div className={styles.heroActions}>
-            <Button variant="primary">Paste your writing</Button>
-            <Button variant="secondary">See how it works</Button>
+            <Link href="/mirror" className={`${buttonStyles.btn} ${buttonStyles.primary}`}>
+              Paste your writing
+            </Link>
+            <a href="#mirror-preview" className={`${buttonStyles.btn} ${buttonStyles.secondary}`}>
+              See how it works
+            </a>
           </div>
         </div>
       </header>
@@ -123,7 +131,7 @@ export default function Home() {
       </section>
 
       {/* the Mirror preview (§6.5 #3 + §6.6 #3, static) */}
-      <section className={styles.section}>
+      <section className={styles.section} id="mirror-preview">
         <div className={styles.sectionHead}>
           <h2>The Mirror — preview</h2>
           <p>
@@ -164,8 +172,10 @@ export default function Home() {
             </div>
           </div>
           <p className={styles.mirrorNote}>
-            Static preview. The live Mirror — wired to the message pipeline with
-            the Fidelity Ring and Tonality Sliders — is Phase 1.
+            This is a static preview. The{" "}
+            <Link href="/mirror">live Mirror</Link> — wired to the real capture +
+            chat pipeline with the Fidelity Ring and Tonality Sliders — is ready.{" "}
+            <Link href="/mirror">Paste your writing →</Link>
           </p>
         </div>
       </section>

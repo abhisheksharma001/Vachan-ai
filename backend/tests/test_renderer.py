@@ -82,8 +82,19 @@ async def test_mirror_chat_replies_in_voice_live():
         r = await client.post(f"/personas/{pid}/chat", headers=headers,
                               json={"message": "bhai project kaisa chal raha hai?"})
         assert r.status_code == 200, r.text
-        reply = r.json()["reply"]
+        body = r.json()
+        reply = body["reply"]
         assert isinstance(reply, str) and len(reply) > 0
         # not a corporate AI deflection
         assert "as an ai" not in reply.lower()
         assert "<think>" not in reply.lower()
+        # the Mirror asks for scoring by default → a Fidelity Ring payload comes back
+        assert "fidelity" in body
+        assert 0.0 <= body["fidelity"]["pfs"] <= 1.0
+
+        # a live Tonality-Slider override is accepted and still returns a scored reply
+        r2 = await client.post(f"/personas/{pid}/chat", headers=headers,
+                               json={"message": "kal call karein?",
+                                     "tone": {"formality": 0.9, "hinglish": 0.1}})
+        assert r2.status_code == 200, r2.text
+        assert len(r2.json()["reply"]) > 0

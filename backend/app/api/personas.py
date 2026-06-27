@@ -56,11 +56,21 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class ToneOverride(BaseModel):
+    """Live slider targets (doc 06 §6.5 #5). Phase 1 re-steers via the prompt;
+    V2 maps these to control-vector coefficients. None = leave the capsule as-is."""
+    formality: float | None = Field(None, ge=0.0, le=1.0, description="0 casual … 1 formal")
+    hinglish: float | None = Field(None, ge=0.0, le=1.0, description="0 English … 1 heavy mix")
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="What you say to your clone")
     history: list[ChatTurn] = Field(default_factory=list, description="Prior turns")
     score: bool = Field(
         True, description="Also score the reply's fidelity (the Ring). One cheap extra call."
+    )
+    tone: ToneOverride | None = Field(
+        None, description="Live Tonality Slider overrides for this turn"
     )
 
 
@@ -275,20 +285,31 @@ async def chat_with_clone(
             detail="This persona has no capsule yet — capture some writing first.",
         )
 
+    # Apply live slider overrides to a COPY of the capsule (never mutate the
+    # stored version): the same steered view drives BOTH generation and scoring.
+    capsule_data = capsule.capsule_data
+    if body.tone is not None:
+        lang = {**capsule_data.get("language", {})}
+        if body.tone.formality is not None:
+            lang["formality_target"] = body.tone.formality
+        if body.tone.hinglish is not None:
+            lang["cmi_target"] = body.tone.hinglish
+        capsule_data = {**capsule_data, "language": lang}
+
     reply = await render_reply(
-        capsule.capsule_data,
+        capsule_data,
         body.message,
         history=[t.model_dump() for t in body.history],
     )
     response = {
         "persona_id": persona_id,
         "capsule_version": capsule.version,
-        "band": capsule.capsule_data.get("band"),
+        "band": capsule_data.get("band"),
         "reply": reply,
     }
     # Score the reply so the Mirror can show the Fidelity Ring (doc 03 §3.5).
     # av_cosine/centroid_distance stay None until the neural fingerprint (1.5),
     # so PFS comes back PROVISIONAL (judge-only) and clearly flagged.
     if body.score:
-        response["fidelity"] = (await score_reply(capsule.capsule_data, reply)).as_dict()
+        response["fidelity"] = (await score_reply(capsule_data, reply)).as_dict()
     return response
