@@ -29,6 +29,7 @@ from app.models.tables import (
 )
 from app.tone.capsule import build_capsule
 from app.tone.ingest import run_capture
+from app.tone.renderer import render_reply
 
 router = APIRouter(prefix="/personas", tags=["personas"])
 
@@ -47,6 +48,16 @@ class CaptureRequest(BaseModel):
     build_capsule: bool = Field(
         True, description="Project a fresh persona capsule from the new writing"
     )
+
+
+class ChatTurn(BaseModel):
+    role: str  # "user" or "clone"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., description="What you say to your clone")
+    history: list[ChatTurn] = Field(default_factory=list, description="Prior turns")
 
 
 async def _ensure_tenant(session: AsyncSession, auth: AuthContext) -> None:
@@ -232,4 +243,42 @@ async def get_capsule(
         "version": capsule.version,
         "capsule_data": capsule.capsule_data,
         "yaml_rendered": capsule.yaml_rendered,
+    }
+
+
+@router.post("/{persona_id}/chat")
+async def chat_with_clone(
+    persona_id: str,
+    body: ChatRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """
+    The Mirror: chat with your clone. Synchronous (interactive) — loads the
+    latest capsule and replies in the persona's voice (Path A renderer).
+    """
+    async with org_scoped_session(auth.org_id) as session:
+        capsule = (
+            await session.execute(
+                select(PersonaCapsule)
+                .where(PersonaCapsule.persona_id == persona_id)
+                .order_by(PersonaCapsule.version.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if capsule is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This persona has no capsule yet — capture some writing first.",
+        )
+
+    reply = await render_reply(
+        capsule.capsule_data,
+        body.message,
+        history=[t.model_dump() for t in body.history],
+    )
+    return {
+        "persona_id": persona_id,
+        "capsule_version": capsule.version,
+        "band": capsule.capsule_data.get("band"),
+        "reply": reply,
     }

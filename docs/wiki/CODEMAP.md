@@ -5,7 +5,7 @@
 > public classes/functions, and how modules depend on each other.
 > Ask questions against it with `tools/codewiki/ask.py` (see that file).
 
-_Generated 2026-06-28 00:09 • 30 modules • 2950 lines._
+_Generated 2026-06-28 03:31 • 31 modules • 3126 lines._
 
 ## Module dependency graph
 
@@ -23,6 +23,7 @@ graph LR
   app_api_personas[app.api.personas] --> app_models_tables[app.models.tables]
   app_api_personas[app.api.personas] --> app_tone_capsule[app.tone.capsule]
   app_api_personas[app.api.personas] --> app_tone_ingest[app.tone.ingest]
+  app_api_personas[app.api.personas] --> app_tone_renderer[app.tone.renderer]
   app_channels_queue[app.channels.queue] --> app_channels_contract[app.channels.contract]
   app_channels_queue[app.channels.queue] --> app_core_redis_client[app.core.redis_client]
   app_core_auth[app.core.auth] --> app_core_config[app.core.config]
@@ -50,6 +51,7 @@ graph LR
   app_tone_ingest[app.tone.ingest] --> app_core_pii[app.core.pii]
   app_tone_ingest[app.tone.ingest] --> app_models_tables[app.models.tables]
   app_tone_ingest[app.tone.ingest] --> app_tone_features[app.tone.features]
+  app_tone_renderer[app.tone.renderer] --> app_core_llm[app.core.llm]
   app_workers_echo_worker[app.workers.echo_worker] --> app_channels_contract[app.channels.contract]
   app_workers_echo_worker[app.workers.echo_worker] --> app_core_db[app.core.db]
   app_workers_echo_worker[app.workers.echo_worker] --> app_core_pii[app.core.pii]
@@ -108,15 +110,19 @@ Message ingress — the web channel's front door (docs/05 §5.3).
 - `async def get_reply(idempotency_key: str, auth: AuthContext=Depends(get_current_auth)) -> JSONResponse` — 
 
 ### `app.api.personas`
-_backend/app/api/personas.py · 236 lines_
+_backend/app/api/personas.py · 285 lines_
 
 Personas API — create a persona, feed it your writing, read its style back.
 
-**Depends on:** `app.core.auth`, `app.core.db`, `app.models.tables`, `app.tone.capsule`, `app.tone.ingest`
+**Depends on:** `app.core.auth`, `app.core.db`, `app.models.tables`, `app.tone.capsule`, `app.tone.ingest`, `app.tone.renderer`
 
 - **class `CreatePersonaRequest`(BaseModel)** — 
 
 - **class `CaptureRequest`(BaseModel)** — 
+
+- **class `ChatTurn`(BaseModel)** — 
+
+- **class `ChatRequest`(BaseModel)** — 
 
 - `async def create_persona(body: CreatePersonaRequest, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
 
@@ -125,6 +131,8 @@ Personas API — create a persona, feed it your writing, read its style back.
 - `async def get_persona(persona_id: str, auth: AuthContext=Depends(get_current_auth)) -> dict` — 
 
 - `async def get_capsule(persona_id: str, auth: AuthContext=Depends(get_current_auth)) -> dict` — Return the latest persona capsule (capsule_data + rendered persona.md).
+
+- `async def chat_with_clone(persona_id: str, body: ChatRequest, auth: AuthContext=Depends(get_current_auth)) -> dict` — The Mirror: chat with your clone. Synchronous (interactive) — loads the
 
 ### `app.channels.__init__`
 _backend/app/channels/__init__.py · 8 lines_
@@ -389,6 +397,19 @@ INGEST — capture's storage step: sanitize → measure → store observations.
 - `async def ingest_messages(session: AsyncSession, *, org_id: str, persona_id: str, consent_id: str, messages: list[str], source_type: str) -> tuple[int, int, list[str]]` — Sanitize + measure + store each message as a persona_observation.
 
 - `async def run_capture(*, org_id: str, persona_id: str, consent_id: str, raw_text: str, source_type: str, author_name: str | None=None) -> CaptureResult` — Full capture: parse → sanitize → store → re-band the persona.
+
+### `app.tone.renderer`
+_backend/app/tone/renderer.py · 127 lines_
+
+RENDERER — Path A generation (doc 03 §3.4): reply in the persona's voice.
+
+**Depends on:** `app.core.llm`
+
+- `def build_system_prompt(capsule_data: dict) -> str` — Compile the capsule into a system prompt of voice + hard constraints.
+
+- `def build_messages(capsule_data: dict, user_message: str, history: list[dict] | None=None) -> list[dict]` — Assemble the full chat payload: system + prior turns + the new message.
+
+- `async def render_reply(capsule_data: dict, user_message: str, history: list[dict] | None=None) -> str` — Generate one in-voice reply. Returns clean text (no reasoning leakage).
 
 ### `app.workers.__init__`
 _backend/app/workers/__init__.py · 9 lines_
