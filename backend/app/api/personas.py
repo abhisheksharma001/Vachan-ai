@@ -31,6 +31,7 @@ from app.tone.capsule import build_capsule
 from app.tone.fidelity import score_reply
 from app.tone.fingerprint import fidelity_signals
 from app.tone.ingest import run_capture
+from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -67,6 +68,9 @@ class ToneOverride(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="What you say to your clone")
     history: list[ChatTurn] = Field(default_factory=list, description="Prior turns")
+    channel: str = Field(
+        "chat", description="Target register: 'chat' | 'english' | 'email' | 'voice'"
+    )
     score: bool = Field(
         True, description="Also score the reply's fidelity (the Ring). One cheap extra call."
     )
@@ -301,15 +305,24 @@ async def chat_with_clone(
             lang["cmi_target"] = body.tone.hinglish
         capsule_data = {**capsule_data, "language": lang}
 
+    # Bend the capsule for the target CHANNEL (english/email/voice), AFTER the
+    # slider overrides so an explicit drag still wins. Generation and scoring then
+    # share this channel-adjusted view, so a reply is graded against the right
+    # target (an English reply isn't penalised for "not enough Hinglish").
+    register = get_register(body.channel)
+    capsule_data = apply_register(capsule_data, register)
+
     reply = await render_reply(
         capsule_data,
         body.message,
         history=[t.model_dump() for t in body.history],
+        register=register,
     )
     response = {
         "persona_id": persona_id,
         "capsule_version": capsule.version,
         "band": capsule_data.get("band"),
+        "channel": register.name,
         "reply": reply,
     }
     # Score the reply so the Mirror can show the Fidelity Ring (doc 03 §3.5).

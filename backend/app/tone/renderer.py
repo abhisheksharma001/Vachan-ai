@@ -22,6 +22,7 @@ import re
 
 from app.core import constants as C
 from app.core.llm import complete_with_alias
+from app.tone.registers import Register, get_register
 
 RENDERER_ALIAS = C.ALIAS_GROQ  # TODO(FD-16): Sarvam primary once reasoning is stripped
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -30,6 +31,8 @@ _MAX_HISTORY = 12
 
 
 def _mix_hint(cmi: float) -> str:
+    if cmi <= 0.0:
+        return "clear, natural English with no Hindi mixing"
     if cmi < 0.1:
         return "mostly English, occasional Hindi words"
     if cmi < 0.3:
@@ -37,8 +40,10 @@ def _mix_hint(cmi: float) -> str:
     return "heavy Hindi-English code-mixing"
 
 
-def build_system_prompt(capsule_data: dict) -> str:
-    """Compile the capsule into a system prompt of voice + hard constraints."""
+def build_system_prompt(capsule_data: dict, register: Register | None = None) -> str:
+    """Compile the capsule into a system prompt of voice + hard constraints,
+    framed for the target CHANNEL (chat / english / email / voice)."""
+    reg = register or get_register("chat")
     lang = capsule_data.get("language", {})
     hr = capsule_data.get("hard_rules", {})
     cmi = float(lang.get("cmi_target", 0.0))
@@ -50,11 +55,11 @@ def build_system_prompt(capsule_data: dict) -> str:
     )
 
     lines = [
-        "You are role-playing as a specific real person in a casual chat. Reply "
-        "EXACTLY as they would — same tone, same Hindi/English mix, same rhythm "
-        "and length. You are NOT a helpful AI assistant; you ARE this person. "
-        "Never break character, never explain yourself, never use corporate "
-        "phrasing. Keep replies short and natural, like a real text message.",
+        f"You are role-playing as a specific real person who is {reg.framing}. "
+        "Reply EXACTLY as they would — same tone, same Hindi/English mix, same "
+        "rhythm and length. You are NOT a helpful AI assistant; you ARE this "
+        "person. Never break character, never explain yourself, and never use "
+        "corporate or AI-assistant phrasing unless that is genuinely how they write.",
         "",
         f"VOICE: {capsule_data.get('voice_description', '').strip()}",
         # Qualitative only — NEVER expose numbers/jargon the model might parrot
@@ -62,19 +67,27 @@ def build_system_prompt(capsule_data: dict) -> str:
         f"LANGUAGE: Write in {_mix_hint(cmi)}. "
         f"Use {lang.get('script', 'roman')} script. Keep the register {tone}.",
     ]
+    if reg.structure:
+        lines.append(f"CHANNEL: {reg.structure}")
+    lines.append(f"LENGTH: {reg.length_hint}")
+    # The Hinglish-pattern notes only help when we're actually code-mixing.
+    show_hinglish = cmi > 0.0
     if capsule_data.get("rhythm"):
         lines.append("RHYTHM: " + " ".join(capsule_data["rhythm"]))
-    if capsule_data.get("hinglish_patterns"):
+    if show_hinglish and capsule_data.get("hinglish_patterns"):
         lines.append("HINGLISH: " + " ".join(capsule_data["hinglish_patterns"]))
 
     never, always = hr.get("never", []), hr.get("always", [])
+    if reg.cmi_override == 0.0:
+        always = [a for a in always if "hinglish" not in a.lower() and "hindi" not in a.lower()]
     if never:
         lines.append("NEVER: " + "; ".join(never))
     if always:
         lines.append("ALWAYS: " + "; ".join(always))
-    lines.append(f"EMOJI: {hr.get('emoji', 'sparse')}.")
+    emoji_rule = "none" if reg.drop_emoji else hr.get("emoji", "sparse")
+    lines.append(f"EMOJI: {emoji_rule}.")
 
-    anchors = capsule_data.get("anchors", [])[:_MAX_ANCHORS]
+    anchors = capsule_data.get("anchors", [])[:_MAX_ANCHORS] if reg.keep_anchors else []
     if anchors:
         lines.append("")
         lines.append("Examples — IN is THEIR real voice (imitate this style); "
@@ -84,6 +97,12 @@ def build_system_prompt(capsule_data: dict) -> str:
             if a.get("out"):
                 lines.append(f"  OUT: {a['out']}")
         lines.append("Move toward IN, away from OUT.")
+
+    # The channel directive goes LAST so recency makes it the strongest signal —
+    # it has to out-weigh the voice description and any examples above it.
+    if reg.directive:
+        lines.append("")
+        lines.append(reg.directive)
     return "\n".join(lines)
 
 
@@ -91,9 +110,10 @@ def build_messages(
     capsule_data: dict,
     user_message: str,
     history: list[dict] | None = None,
+    register: Register | None = None,
 ) -> list[dict]:
     """Assemble the full chat payload: system + prior turns + the new message."""
-    msgs: list[dict] = [{"role": "system", "content": build_system_prompt(capsule_data)}]
+    msgs: list[dict] = [{"role": "system", "content": build_system_prompt(capsule_data, register)}]
     for turn in (history or [])[-_MAX_HISTORY:]:
         role = "assistant" if turn.get("role") in ("assistant", "clone") else "user"
         content = turn.get("content") or turn.get("text") or ""
@@ -115,12 +135,16 @@ async def render_reply(
     capsule_data: dict,
     user_message: str,
     history: list[dict] | None = None,
+    register: Register | None = None,
 ) -> str:
-    """Generate one in-voice reply. Returns clean text (no reasoning leakage)."""
+    """Generate one in-voice reply for the target CHANNEL. Clean text out."""
+    reg = register or get_register("chat")
+    # Spoken turns are short; email/chat can run a little longer.
+    max_tokens = 160 if reg.tts_safe else 400
     resp = await complete_with_alias(
         RENDERER_ALIAS,
-        build_messages(capsule_data, user_message, history),
-        max_tokens=400,
+        build_messages(capsule_data, user_message, history, reg),
+        max_tokens=max_tokens,
         temperature=0.8,  # a little warmth/variation; the critic loop (1.4) will tighten
     )
     return _clean(resp.choices[0].message.content or "")

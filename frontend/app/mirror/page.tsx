@@ -29,6 +29,14 @@ nice work btw, client khush ho jayega isse`;
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
+// The channel decides the register: the same clone, texting vs emailing vs speaking.
+const CHANNELS: { id: string; label: string; hint: string }[] = [
+  { id: "chat", label: "Chat", hint: "Casual texting — Hinglish welcome" },
+  { id: "english", label: "English", hint: "Same voice, in English only" },
+  { id: "email", label: "Email", hint: "Greeting + body + sign-off" },
+  { id: "voice", label: "Voice", hint: "Spoken, TTS-safe, short turns" },
+];
+
 const BAND_LABEL: Record<string, string> = {
   warming_up: "warming up",
   calibrating: "calibrating",
@@ -52,6 +60,7 @@ export default function MirrorPage() {
 
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
+  const [channel, setChannel] = useState("chat");
   const [sending, setSending] = useState(false);
   const [fidelity, setFidelity] = useState<Fidelity | null>(null);
   const [pacing, setPacing] = useState<number | null>(null);
@@ -116,6 +125,7 @@ export default function MirrorPage() {
           personaId,
           message: text,
           history,
+          channel,
           tone: { formality: tone.formality, hinglish: tone.hinglish },
         }),
       });
@@ -195,6 +205,22 @@ export default function MirrorPage() {
                 <span className={`${styles.dot} ${styles[band] ?? ""}`} />
                 {BAND_LABEL[band] ?? band}
               </span>
+            </div>
+            <div className={styles.channelBar} role="tablist" aria-label="Channel">
+              {CHANNELS.map((ch) => (
+                <button
+                  key={ch.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={channel === ch.id}
+                  title={ch.hint}
+                  className={`${styles.channelBtn} ${channel === ch.id ? styles.channelOn : ""}`}
+                  onClick={() => setChannel(ch.id)}
+                  disabled={sending}
+                >
+                  {ch.label}
+                </button>
+              ))}
             </div>
             <div className={styles.chatBody} ref={scrollRef}>
               {messages.map((m, i) => (

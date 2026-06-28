@@ -13,7 +13,13 @@ type Turn = { role: "user" | "clone"; content: string };
 type Tone = { formality?: number; hinglish?: number };
 
 export async function POST(req: NextRequest) {
-  let body: { personaId?: string; message?: string; history?: Turn[]; tone?: Tone };
+  let body: {
+    personaId?: string;
+    message?: string;
+    history?: Turn[];
+    tone?: Tone;
+    channel?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -32,6 +38,7 @@ export async function POST(req: NextRequest) {
         message,
         history: body.history ?? [],
         tone: body.tone ?? null,
+        channel: body.channel ?? "chat",
         score: true,
       }),
     });

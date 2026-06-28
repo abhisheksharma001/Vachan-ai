@@ -157,6 +157,45 @@
   background: var(--amber-500);
 }
 
+/* channel selector — the same clone, different register */
+.channelBar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--sand-300);
+  flex-wrap: wrap;
+}
+.channelBtn {
+  appearance: none;
+  border: 1px solid var(--sand-300);
+  background: var(--sand-50);
+  color: var(--ink-500);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.channelBtn:hover:not(:disabled) {
+  color: var(--ink-900);
+  border-color: var(--coral-500);
+}
+.channelBtn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.channelOn {
+  background: var(--blend-warm);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--shadow-sm);
+}
+.channelOn:hover:not(:disabled) {
+  color: #fff;
+}
+
 .chatBody {
   flex: 1;
   overflow-y: auto;
