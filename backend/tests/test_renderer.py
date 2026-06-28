@@ -90,7 +90,16 @@ async def test_mirror_chat_replies_in_voice_live():
         assert "<think>" not in reply.lower()
         # the Mirror asks for scoring by default → a Fidelity Ring payload comes back
         assert "fidelity" in body
-        assert 0.0 <= body["fidelity"]["pfs"] <= 1.0
+        fid = body["fidelity"]
+        assert 0.0 <= fid["pfs"] <= 1.0
+        # Slice 1.5: when the neural fingerprint is present the full composite is
+        # used (the two style signals are real); otherwise PFS stays judge-only.
+        if fid["av_cosine"] is not None:
+            assert fid["pfs_basis"] == "full"
+            assert 0.0 <= fid["av_cosine"] <= 1.0
+            assert fid["centroid_distance"] is not None
+        else:
+            assert fid["pfs_basis"] == "judge_only"
 
         # a live Tonality-Slider override is accepted and still returns a scored reply
         r2 = await client.post(f"/personas/{pid}/chat", headers=headers,

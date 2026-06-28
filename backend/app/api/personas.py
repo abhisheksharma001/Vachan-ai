@@ -29,6 +29,7 @@ from app.models.tables import (
 )
 from app.tone.capsule import build_capsule
 from app.tone.fidelity import score_reply
+from app.tone.fingerprint import fidelity_signals
 from app.tone.ingest import run_capture
 from app.tone.renderer import render_reply
 
@@ -284,6 +285,10 @@ async def chat_with_clone(
             status_code=409,
             detail="This persona has no capsule yet — capture some writing first.",
         )
+    # The stored neural fingerprint (centroid). Read it off now while the row is
+    # loaded; it's the zero placeholder for capsules built before Slice 1.5 or
+    # without the model installed, which fidelity_signals() detects and skips.
+    fingerprint = capsule.fingerprint_vector
 
     # Apply live slider overrides to a COPY of the capsule (never mutate the
     # stored version): the same steered view drives BOTH generation and scoring.
@@ -308,8 +313,18 @@ async def chat_with_clone(
         "reply": reply,
     }
     # Score the reply so the Mirror can show the Fidelity Ring (doc 03 §3.5).
-    # av_cosine/centroid_distance stay None until the neural fingerprint (1.5),
-    # so PFS comes back PROVISIONAL (judge-only) and clearly flagged.
+    # The neural fingerprint (Slice 1.5) gives the two style signals; when it's
+    # the zero placeholder / model missing, both come back None and PFS stays
+    # PROVISIONAL (judge-only), clearly flagged. With a real centroid, the full
+    # composite activates (pfs_basis="full").
     if body.score:
-        response["fidelity"] = (await score_reply(capsule_data, reply)).as_dict()
+        av_cosine, centroid_distance = await fidelity_signals(fingerprint, reply)
+        response["fidelity"] = (
+            await score_reply(
+                capsule_data,
+                reply,
+                av_cosine=av_cosine,
+                centroid_distance=centroid_distance,
+            )
+        ).as_dict()
     return response

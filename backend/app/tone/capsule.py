@@ -30,6 +30,7 @@ from app.core.db import org_scoped_session
 from app.core.llm import complete_with_alias, gateway_status
 from app.models.tables import Persona, PersonaCapsule, PersonaObservation
 from app.tone.features import aggregate_features
+from app.tone.fingerprint import compute_centroid
 from app.tone.ingest import cold_start_band
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
@@ -282,6 +283,12 @@ async def build_capsule(
         capsule["version"] = next_version
         await _llm_enrich(capsule, stats, anchors)
 
+        # NEURAL fingerprint (Slice 1.5): the style centroid over the person's own
+        # sanitized messages. None when the model isn't installed/loadable, in which
+        # case we store the zero placeholder and PFS stays provisional (judge-only).
+        fingerprint = await compute_centroid(sanitized_exemplars)
+        capsule["has_fingerprint"] = fingerprint is not None
+
         yaml_rendered = render_yaml(persona, capsule)
         session.add(
             PersonaCapsule(
@@ -290,8 +297,7 @@ async def build_capsule(
                 version=next_version,
                 capsule_data=capsule,
                 yaml_rendered=yaml_rendered,
-                # Slice 1.5 replaces this zero placeholder with the real centroid.
-                fingerprint_vector=[0.0] * C.STYLE_VECTOR_DIM,
+                fingerprint_vector=fingerprint or [0.0] * C.STYLE_VECTOR_DIM,
                 observations_count=stats["observations"],
                 consent_ref=consent_id,
             )
@@ -304,4 +310,5 @@ async def build_capsule(
         "confidence": capsule["confidence"],
         "anchors": len(anchors),
         "enriched": capsule["enriched"],
+        "has_fingerprint": capsule["has_fingerprint"],
     }

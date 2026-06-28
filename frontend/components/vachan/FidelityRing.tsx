@@ -8,8 +8,9 @@
  * HONESTY (FD-4 / RULE 5):
  *  • The state word is band-capped — we never show "Strong/Indistinguishable"
  *    while the persona is still warming up or calibrating, no matter the score.
- *  • PFS is PROVISIONAL until the neural fingerprint (Slice 1.5): we flag that
- *    with a "provisional" chip and grey out the Vocabulary (AV-cosine) sub-bar.
+ *  • PFS is PROVISIONAL when a capsule has no neural fingerprint yet (judge-only
+ *    basis): we flag that with a "provisional" chip and grey out the Style-match
+ *    (AV-cosine) sub-bar. With a fingerprint (Slice 1.5), both light up.
  */
 "use client";
 
@@ -26,6 +27,9 @@ export type Fidelity = {
   cmi_target?: number | null;
   hard_rule_pass?: boolean;
   hard_rule_violations?: string[];
+  // Slice 1.5 — the NEURAL style signals (null when no fingerprint yet).
+  av_cosine?: number | null;
+  centroid_distance?: number | null;
 };
 
 function stateWord(pfs: number, band?: string): string {
@@ -154,7 +158,13 @@ export function FidelityRing({
         <SubBar label="Voice match (judge)" value={judge} />
         <SubBar label="Hinglish index" value={hinglish} />
         <SubBar label="Pacing match" value={pacing ?? null} />
-        <SubBar label="Vocabulary match" value={null} note="Slice 1.5" />
+        {/* Slice 1.5 — the neural style/authorship signal. Greys to "—" when the
+            capsule has no fingerprint yet (PFS still judge-only). */}
+        <SubBar
+          label="Style match (neural)"
+          value={fidelity?.av_cosine ?? null}
+          note="no fingerprint"
+        />
       </div>
 
       {fidelity?.judge_reason && (
