@@ -63,6 +63,9 @@ export default function MirrorPage() {
   const [sending, setSending] = useState(false);
   const [fidelity, setFidelity] = useState<Fidelity | null>(null);
   const [pacing, setPacing] = useState<number | null>(null);
+  const [voiceKb, setVoiceKb] = useState<string | null>(null);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbCopied, setKbCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   async function buildClone() {
@@ -151,6 +154,37 @@ export default function MirrorPage() {
     } finally {
       setSending(false);
       requestAnimationFrame(() => scrollRef.current?.scrollTo(0, 1e6));
+    }
+  }
+
+  async function fetchVoiceKb() {
+    if (!personaId || kbLoading) return;
+    setKbLoading(true);
+    setKbCopied(false);
+    try {
+      const res = await fetch("/api/mirror/voice-kb", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ personaId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not build the voice KB.");
+      setVoiceKb(data.as_markdown ?? "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setKbLoading(false);
+    }
+  }
+
+  async function copyVoiceKb() {
+    if (!voiceKb) return;
+    try {
+      await navigator.clipboard.writeText(voiceKb);
+      setKbCopied(true);
+      setTimeout(() => setKbCopied(false), 1800);
+    } catch {
+      /* clipboard blocked — the textarea is still selectable */
     }
   }
 
@@ -259,6 +293,33 @@ export default function MirrorPage() {
             <FidelityRing fidelity={fidelity} band={band} pacing={pacing} />
             <div className={styles.divider} />
             <TonalitySliders tone={tone} onChange={setTone} disabled={sending} />
+            <div className={styles.divider} />
+
+            {/* Voice knowledge base — Vachan is the tone layer; the user pastes
+                this into their voice platform (Vapi/Retell/LiveKit). */}
+            <div className={styles.kbBlock}>
+              <div className="label">Voice knowledge base</div>
+              <p className={styles.kbHint}>
+                For voice agents — paste this into your voice platform’s LLM. It
+                handles speech; Vachan supplies the voice.
+              </p>
+              <button
+                type="button"
+                className={styles.kbBtn}
+                onClick={fetchVoiceKb}
+                disabled={kbLoading}
+              >
+                {kbLoading ? "Building…" : voiceKb ? "Rebuild voice KB" : "Get voice KB"}
+              </button>
+              {voiceKb && (
+                <>
+                  <textarea className={styles.kbText} value={voiceKb} readOnly rows={8} />
+                  <button type="button" className={styles.kbCopy} onClick={copyVoiceKb}>
+                    {kbCopied ? "Copied ✓" : "Copy to clipboard"}
+                  </button>
+                </>
+              )}
+            </div>
           </aside>
         </section>
       )}

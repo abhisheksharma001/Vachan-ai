@@ -33,6 +33,7 @@ from app.tone.fingerprint import fidelity_signals
 from app.tone.ingest import run_capture
 from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
+from app.voice.kb import build_voice_kb
 
 router = APIRouter(prefix="/personas", tags=["personas"])
 
@@ -263,6 +264,36 @@ async def get_capsule(
         "capsule_data": capsule.capsule_data,
         "yaml_rendered": capsule.yaml_rendered,
     }
+
+
+@router.get("/{persona_id}/voice-kb")
+async def get_voice_kb(
+    persona_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Export the persona's VOICE knowledge base for an external voice platform
+    (Vapi/Retell/LiveKit). Vachan supplies the voice + guardrails; the platform
+    runs the mic, STT and TTS. Returns a paste-ready system prompt + guidelines."""
+    async with org_scoped_session(auth.org_id) as session:
+        persona = (
+            await session.execute(select(Persona).where(Persona.id == persona_id))
+        ).scalar_one_or_none()
+        if persona is None:
+            raise HTTPException(status_code=404, detail="Persona not found.")
+        capsule = (
+            await session.execute(
+                select(PersonaCapsule)
+                .where(PersonaCapsule.persona_id == persona_id)
+                .order_by(PersonaCapsule.version.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if capsule is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This persona has no capsule yet — capture some writing first.",
+        )
+    return build_voice_kb(capsule.capsule_data, persona_name=persona.name)
 
 
 @router.post("/{persona_id}/chat")
