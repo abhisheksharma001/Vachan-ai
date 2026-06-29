@@ -27,7 +27,7 @@ from app.tone.capsule import (
 from app.tone.capture import parse_pasted
 from app.tone.features import aggregate_features, message_features
 from app.tone.fidelity import score_reply
-from app.tone.fingerprint import compute_centroid, fidelity_signals
+from app.tone.fingerprint import best_fidelity_signals, compute_centroid, reference_centroids
 from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
 
@@ -51,6 +51,11 @@ async def build_capsule_inmemory(sample: str) -> tuple[dict, list[float] | None]
     capsule = _deterministic_capsule(stats_in, agg, anchors)
     # #40: english-translated exemplars so the english channel keeps the voice.
     capsule["anchors_english"] = await _translate_anchors_english(capsule["anchors"])
+    # English reference centroid (mirrors build_capsule) — score English-to-English.
+    english_texts = [a["in"] for a in capsule["anchors_english"] if a.get("in")]
+    capsule["fingerprint_english"] = (
+        await compute_centroid(english_texts) if english_texts else None
+    )
     centroid = await compute_centroid(msgs)
     return capsule, centroid
 
@@ -59,7 +64,8 @@ async def _score_turn(capsule: dict, centroid, message: str, channel: str, tempe
     reg = get_register(channel)
     cap = apply_register(capsule, reg)
     reply = await render_reply(cap, message, register=reg, temperature=temperature)
-    av, dist = await fidelity_signals(centroid, reply)
+    references = reference_centroids(centroid, cap, channel)
+    av, dist = await best_fidelity_signals(references, reply)
     fid = await score_reply(cap, reply, channel=channel, av_cosine=av, centroid_distance=dist)
     return {
         "channel": channel,

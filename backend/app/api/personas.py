@@ -29,7 +29,7 @@ from app.models.tables import (
 )
 from app.tone.capsule import build_capsule
 from app.tone.fidelity import score_reply
-from app.tone.fingerprint import fidelity_signals
+from app.tone.fingerprint import best_fidelity_signals, reference_centroids
 from app.tone.ingest import run_capture
 from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
@@ -362,7 +362,11 @@ async def chat_with_clone(
     # PROVISIONAL (judge-only), clearly flagged. With a real centroid, the full
     # composite activates (pfs_basis="full").
     if body.score:
-        av_cosine, centroid_distance = await fidelity_signals(fingerprint, reply)
+        # Score against the channel's reference centroid(s): english is graded
+        # against the BEST of [Hinglish, English] style centroids (English-to-
+        # English when that's closer), every other channel against the main one.
+        references = reference_centroids(fingerprint, capsule_data, register.name)
+        av_cosine, centroid_distance = await best_fidelity_signals(references, reply)
         response["fidelity"] = (
             await score_reply(
                 capsule_data,

@@ -336,6 +336,15 @@ async def build_capsule(
         fingerprint = await compute_centroid(sanitized_exemplars)
         capsule["has_fingerprint"] = fingerprint is not None
 
+        # ENGLISH reference centroid: a style centroid over the English-translated
+        # anchors, so an english-channel reply is scored English-to-English (the
+        # neural mirror of the #42 judge fix). Stored in capsule_data (JSONB), not
+        # the main pgvector column. None when there's no translation / no model.
+        english_texts = [a["in"] for a in capsule["anchors_english"] if a.get("in")]
+        capsule["fingerprint_english"] = (
+            await compute_centroid(english_texts) if english_texts else None
+        )
+
         # DRIFT / merge-gate: how far this rebuild moved from the previous capsule's
         # fingerprint. "collapse" means the new capture looks like a DIFFERENT person
         # (alien/noisy data) — we keep the version (append-only) but flag it loudly so
