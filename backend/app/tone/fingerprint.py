@@ -104,6 +104,32 @@ def centroid_cosine(old, new) -> float | None:
     return round(max(-1.0, min(1.0, _cosine(a, b))), 4)
 
 
+def reference_centroids(main_fingerprint, capsule_data: dict, channel: str) -> list:
+    """The style centroid(s) to score a reply AGAINST, by channel.
+
+    The stored fingerprint is built from the person's own (mostly Hinglish)
+    messages. Scoring an ENGLISH-channel reply against it alone under-rates it
+    for a language gap, not a style gap — the mirror of the judge problem (#42),
+    now on the neural signal. So for the english channel we ALSO offer an English
+    reference centroid (built from the English-translated anchors) and let the
+    scorer take the BEST match: "does this sound like them?" is true if the reply
+    sits near EITHER their Hinglish style OR their English style.
+
+    Measured why best-of-both, not swap: swapping helped a heavily-Hinglish
+    persona (cos 0.26 -> 0.55) but HURT an already-brief one (0.85 -> 0.55);
+    the max never regresses and captures the upside. Every non-english channel
+    keeps just the main fingerprint. Zero placeholders are dropped (never
+    fabricated)."""
+    refs = []
+    if not is_zero_vector(main_fingerprint):
+        refs.append(main_fingerprint)
+    if channel == "english":
+        en = capsule_data.get("fingerprint_english")
+        if not is_zero_vector(en):
+            refs.append(en)
+    return refs
+
+
 def drift_band(cosine: float | None) -> str:
     """Band a centroid cosine into a persona-stability label.
 
@@ -186,6 +212,33 @@ async def fidelity_signals(
         cos = _cosine(embs[0], centroid)
         av = max(0.0, min(1.0, cos))           # PFS expects 0..1
         dist = max(0.0, min(1.0, 1.0 - av))    # drift = complement
+        return round(av, 4), round(dist, 4)
+
+    return await asyncio.to_thread(_work)
+
+
+async def best_fidelity_signals(
+    references: list, candidate: str
+) -> tuple[float | None, float | None]:
+    """Like fidelity_signals, but against SEVERAL reference centroids (e.g. the
+    english channel's [Hinglish, English] pair) — take the BEST match. The reply
+    is "authored by them" if it sits near ANY of their style references, so we
+    use the max cosine. The candidate is embedded ONCE, then compared to each.
+
+    Returns (None, None) — PFS stays provisional — when there's no usable
+    reference (all zero placeholders) or the model/reply can't be embedded."""
+    refs = [r for r in (references or []) if not is_zero_vector(r)]
+    if not refs or not (candidate or "").strip():
+        return None, None
+
+    def _work() -> tuple[float | None, float | None]:
+        embs = _encode([candidate])
+        if embs is None:
+            return None, None
+        v = embs[0]
+        best = max(_cosine(v, np.asarray(r, dtype=np.float32)) for r in refs)
+        av = max(0.0, min(1.0, best))
+        dist = max(0.0, min(1.0, 1.0 - av))
         return round(av, 4), round(dist, 4)
 
     return await asyncio.to_thread(_work)

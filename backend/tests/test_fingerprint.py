@@ -69,6 +69,33 @@ def test_centroid_cosine_math_and_guards():
     assert fp.centroid_cosine([1.0, 0.0, 0.0], [1.0, 0.0]) is None   # shape mismatch
 
 
+def test_reference_centroids_by_channel():
+    """English is graded against BOTH [main, english] (best-of-both); every other
+    channel against just the main one. Zero placeholders are dropped."""
+    main = [0.1, 0.2, 0.3]
+    eng = [0.9, 0.0, 0.1]
+
+    cap = {"fingerprint_english": eng}
+    assert fp.reference_centroids(main, cap, "english") == [main, eng]  # both
+    assert fp.reference_centroids(main, cap, "chat") == [main]          # main only
+    assert fp.reference_centroids(main, cap, "email") == [main]
+    assert fp.reference_centroids(main, cap, "voice") == [main]
+
+    # no english centroid → english is just [main] (no regression, never fabricated)
+    assert fp.reference_centroids(main, {}, "english") == [main]
+    # zero placeholders are dropped on both sides
+    assert fp.reference_centroids([0.0, 0.0, 0.0], cap, "english") == [eng]
+    assert fp.reference_centroids(main, {"fingerprint_english": [0.0, 0.0, 0.0]}, "english") == [main]
+
+
+async def test_best_fidelity_signals_skips_when_no_reference():
+    """All-zero / empty references → (None, None), PFS stays provisional."""
+    av, dist = await fp.best_fidelity_signals([[0.0] * C.STYLE_VECTOR_DIM], "haan bhai")
+    assert av is None and dist is None
+    av2, dist2 = await fp.best_fidelity_signals([], "haan bhai")
+    assert av2 is None and dist2 is None
+
+
 def test_drift_band_thresholds():
     assert fp.drift_band(None) == "unknown"
     assert fp.drift_band(0.99) == "stable"
