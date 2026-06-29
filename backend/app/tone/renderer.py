@@ -161,15 +161,19 @@ async def render_reply(
     user_message: str,
     history: list[dict] | None = None,
     register: Register | None = None,
+    *,
+    temperature: float = 0.8,  # a little warmth/variation; the eval sweep tunes this
+    max_tokens: int | None = None,
 ) -> str:
     """Generate one in-voice reply for the target CHANNEL. Clean text out."""
     reg = register or get_register("chat")
     # Spoken turns are short; email/chat can run a little longer.
-    max_tokens = 160 if reg.tts_safe else 400
+    if max_tokens is None:
+        max_tokens = 160 if reg.tts_safe else 400
     resp = await complete_with_alias(
         RENDERER_ALIAS,
         build_messages(capsule_data, user_message, history, reg),
         max_tokens=max_tokens,
-        temperature=0.8,  # a little warmth/variation; the critic loop (1.4) will tighten
+        temperature=temperature,
     )
     return _clean(resp.choices[0].message.content or "")
