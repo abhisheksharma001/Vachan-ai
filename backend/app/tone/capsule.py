@@ -107,6 +107,9 @@ def _deterministic_capsule(stats: dict, batch_agg: dict, anchors: list[str]) -> 
             "script": script,
             "switch_style": "intra-sentential" if stats["i_index"] > 0.25 else "inter-sentential",
             "avg_message_words": batch_agg.get("avg_message_tokens", 0.0),
+            # Pacing (FD rhythm): how long their messages run and how much that
+            # length varies (+1 = bursty, often several short messages in a row).
+            "length_burstiness": batch_agg.get("length_burstiness", 0.0),
         },
         "hard_rules": {
             "never": never,

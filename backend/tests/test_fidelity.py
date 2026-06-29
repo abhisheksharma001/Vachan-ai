@@ -84,6 +84,14 @@ def test_judge_messages_compile():
     assert "scene kya hai aaj ka" in msgs[1]["content"]     # a real anchor
 
 
+def test_pacing_match():
+    """#34: reply length vs the person's cadence — real signal, not a proxy."""
+    assert fidelity.pacing_match("a b c d e", 5) == 1.0      # bang on
+    assert fidelity.pacing_match("a b c d e f g h i j", 5) == 0.5  # 2x → half credit
+    assert fidelity.pacing_match("hi", 0) is None            # no target yet
+    assert 0.0 <= fidelity.pacing_match("one two three", 12) <= 1.0
+
+
 def test_judge_is_register_aware():
     """#39: the English channel tells the judge NOT to dock points for no Hindi."""
     chat = fidelity.build_judge_messages(_CAPSULE, "all good", channel="chat")[1]["content"]

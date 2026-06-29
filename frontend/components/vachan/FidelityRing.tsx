@@ -30,6 +30,8 @@ export type Fidelity = {
   // Slice 1.5 — the NEURAL style signals (null when no fingerprint yet).
   av_cosine?: number | null;
   centroid_distance?: number | null;
+  // Phase 2 — reply length vs the person's cadence (0..1, null if no target).
+  pacing_match?: number | null;
 };
 
 function stateWord(pfs: number, band?: string): string {

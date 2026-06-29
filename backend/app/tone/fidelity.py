@@ -74,9 +74,24 @@ class FidelityResult:
     judge_reason: str
     av_cosine: float | None          # None until Slice 1.5 (neural fingerprint)
     centroid_distance: float | None  # None until Slice 1.5 (neural fingerprint)
+    pacing_match: float | None       # reply length vs the person's avg (0..1)
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def pacing_match(text: str, avg_words: float) -> float | None:
+    """How close the reply's LENGTH is to the person's typical message length.
+    1.0 = right on their cadence, →0 as it runs much longer/shorter. None when
+    we have no length target yet. A real rhythm signal, not the old word-ratio
+    proxy the frontend used to fake."""
+    if not avg_words or avg_words <= 0:
+        return None
+    words = len((text or "").split())
+    # Symmetric relative error, tolerant: a reply up to ~2x their length still
+    # scores partial credit rather than snapping to zero.
+    rel = abs(words - avg_words) / max(avg_words, 1.0)
+    return round(max(0.0, 1.0 - rel / 2.0), 4)
 
 
 # ── (+) hard-rule regex gate (100% of turns, sub-ms) ─────────────────────
@@ -250,9 +265,11 @@ async def score_reply(
     but advisory for a single interactive turn (±0.05 is tight on one short
     message); it becomes a hard channel gate for auto-send later.
     """
+    lang = capsule_data.get("language", {})
     hard_pass, violations = check_hard_rules(candidate, capsule_data.get("hard_rules", {}))
-    cmi_target = float(capsule_data.get("language", {}).get("cmi_target", 0.0))
+    cmi_target = float(lang.get("cmi_target", 0.0))
     cmi_ok, cmi_out = check_cmi_conformance(candidate, cmi_target)
+    pacing = pacing_match(candidate, float(lang.get("avg_message_words", 0.0)))
     judge_score, judge_reason = await judge_voice(capsule_data, candidate, channel)
     pfs, basis = compute_pfs(judge_score, av_cosine, centroid_distance)
     passed = hard_pass and pfs >= C.PFS_GATE_THRESHOLD
@@ -270,4 +287,5 @@ async def score_reply(
         judge_reason=judge_reason,
         av_cosine=av_cosine,
         centroid_distance=centroid_distance,
+        pacing_match=pacing,
     )

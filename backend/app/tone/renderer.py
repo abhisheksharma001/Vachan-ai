@@ -40,6 +40,25 @@ def _mix_hint(cmi: float) -> str:
     return "heavy Hindi-English code-mixing"
 
 
+def _pacing_hint(avg_words: float, burstiness: float) -> str:
+    """Qualitative cadence (NEVER a raw number — the model would parrot it).
+    Drives how long the reply runs + whether to split into several short bursts."""
+    if avg_words < 6:
+        length = "very short — just a few words, like a quick text"
+    elif avg_words < 14:
+        length = "short — usually a single quick line"
+    elif avg_words < 30:
+        length = "medium — a sentence or two, not a wall of text"
+    else:
+        length = "on the longer side — a few sentences when they have something to say"
+    if burstiness > 0.3:
+        length += (
+            ". They often fire off several short messages in a row rather than "
+            "one long block — split it that way, a blank line between each."
+        )
+    return length
+
+
 def build_system_prompt(capsule_data: dict, register: Register | None = None) -> str:
     """Compile the capsule into a system prompt of voice + hard constraints,
     framed for the target CHANNEL (chat / english / email / voice)."""
@@ -70,6 +89,12 @@ def build_system_prompt(capsule_data: dict, register: Register | None = None) ->
     if reg.structure:
         lines.append(f"CHANNEL: {reg.structure}")
     lines.append(f"LENGTH: {reg.length_hint}")
+    # Person-specific cadence (how long their messages run + bursting habit).
+    avg_words = float(lang.get("avg_message_words", 0.0))
+    if avg_words > 0 and not reg.tts_safe:  # voice has its own spoken-length rule
+        lines.append(
+            f"PACING: Their messages are {_pacing_hint(avg_words, float(lang.get('length_burstiness', 0.0)))}"
+        )
     # The Hinglish-pattern notes only help when we're actually code-mixing.
     show_hinglish = cmi > 0.0
     if capsule_data.get("rhythm"):

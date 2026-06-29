@@ -50,7 +50,6 @@ export default function MirrorPage() {
 
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [band, setBand] = useState<string>("warming_up");
-  const [avgWords, setAvgWords] = useState<number>(12);
   const [tone, setTone] = useState<Tone>({
     warmth: 0.6,
     directness: 0.5,
@@ -84,7 +83,6 @@ export default function MirrorPage() {
 
       setPersonaId(data.personaId);
       setBand(data.band ?? "warming_up");
-      setAvgWords(Number(data.style?.avg_message_tokens) || 12);
 
       const cap = data.capsuleData;
       if (cap) {
@@ -132,12 +130,22 @@ export default function MirrorPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Your clone could not reply.");
 
-      setMessages((prev) => [...prev, { role: "clone", content: data.reply }]);
+      // Human typing cadence: a longer reply takes longer to "type", so the
+      // typing bubble stays up proportionally — a wall of text no longer pops in
+      // as fast as a one-liner. (~45ms/word, clamped, skipped under reduced-motion.)
+      const reply = String(data.reply ?? "");
+      const words = reply.trim() ? reply.trim().split(/\s+/).length : 0;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      const typeDelay = reduce ? 0 : Math.min(2200, Math.max(350, words * 45));
+      if (typeDelay) await new Promise((r) => setTimeout(r, typeDelay));
+
+      setMessages((prev) => [...prev, { role: "clone", content: reply }]);
       if (data.fidelity) setFidelity(data.fidelity as Fidelity);
       if (data.band) setBand(data.band);
-      // Pacing proxy: reply length vs the persona's measured message length.
-      const words = String(data.reply).trim().split(/\s+/).length;
-      setPacing(clamp01(1 - Math.min(1, Math.abs(words - avgWords) / Math.max(avgWords, 1))));
+      // Real pacing now comes from the server (reply length vs their cadence).
+      setPacing(data.fidelity?.pacing_match ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
