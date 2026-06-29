@@ -43,12 +43,12 @@ export default function Home() {
       {/* hero (§6.6 #1) */}
       <header className={styles.hero}>
         <div className={styles.heroInner}>
-          <div className={styles.heroEyebrow}>The Tone Engine</div>
+          <div className={styles.heroEyebrow}>Sound like you — everywhere</div>
           <h1 className={styles.heroTitle}>Every agent. Your voice.</h1>
           <p className={styles.heroSub}>
-            Vachan.ai clones how <em>you</em> communicate — your warmth, your
-            pacing, your Hinglish — so every automated reply still sounds
-            unmistakably like you.
+            Vachan learns how <em>you</em> actually talk — your warmth, your
+            pacing, your Hinglish — so every reply your agents send still sounds
+            like you wrote it. Not a polished robot. You.
           </p>
           <div className={styles.heroActions}>
             <Link href="/mirror" className={`${buttonStyles.btn} ${buttonStyles.primary}`}>
@@ -66,8 +66,8 @@ export default function Home() {
         <div className={styles.sectionHead}>
           <h2>The palette</h2>
           <p>
-            Warm sand canvas, coral as the precious accent — “the voice.” Every
-            color is a CSS token; nothing is hardcoded.
+            Warm sand to sit on, coral for the moments that matter — that’s the
+            voice. Every colour’s a token, nothing hardcoded.
           </p>
         </div>
         <div className={styles.swatches}>
@@ -112,19 +112,22 @@ export default function Home() {
           <Card>
             <h3>Persona</h3>
             <p style={{ marginTop: 8 }}>
-              A named communication identity. One person can own several.
+              One voice, with a name. Keep a few if you like — your work self,
+              your WhatsApp self.
             </p>
           </Card>
           <Card interactive>
             <h3>Fidelity</h3>
             <p style={{ marginTop: 8 }}>
-              How close a reply sounds to you. The Fidelity Ring lands in Phase 1.
+              How close a reply sounds to you — measured live, every single
+              message, no guessing.
             </p>
           </Card>
           <Card>
             <h3>Privacy</h3>
             <p style={{ marginTop: 8 }}>
-              PII is scrubbed before anything is stored or sent to a model.
+              Your private stuff — numbers, UPI, emails — gets scrubbed before
+              anything is saved or sent. Every time.
             </p>
           </Card>
         </div>
@@ -133,12 +136,12 @@ export default function Home() {
       {/* the Mirror preview (§6.5 #3 + §6.6 #3, static) */}
       <section className={styles.section} id="mirror-preview">
         <div className={styles.sectionHead}>
-          <h2>The Mirror — preview</h2>
+          <h2>A peek at the Mirror</h2>
           <p>
-            Coral bubbles are the clone (“the voice”); sand bubbles are you. This
-            preview shows the <strong>real</strong> privacy behavior: the phone
-            number is redacted to <code>[IN_PHONE]</code> before it’s ever shown
-            — exactly what the backend pipeline does.
+            Coral bubbles are your clone; sand ones are you. And notice the{" "}
+            <strong>real</strong> bit — the phone number turns into{" "}
+            <code>[IN_PHONE]</code> before it’s ever shown. That’s not a mockup,
+            that’s exactly what happens to your data.
           </p>
         </div>
         <div className={styles.mirrorWrap}>
@@ -172,16 +175,17 @@ export default function Home() {
             </div>
           </div>
           <p className={styles.mirrorNote}>
-            This is a static preview. The{" "}
-            <Link href="/mirror">live Mirror</Link> — wired to the real capture +
-            chat pipeline with the Fidelity Ring and Tonality Sliders — is ready.{" "}
-            <Link href="/mirror">Paste your writing →</Link>
+            This little one’s just for show. The{" "}
+            <Link href="/mirror">real Mirror</Link> is live — paste your own
+            messages, chat with your clone, watch it score itself.{" "}
+            <Link href="/mirror">Try it →</Link>
           </p>
         </div>
       </section>
 
       <footer className={styles.footer}>
-        Vachan.ai · Phase 0 foundation · Sandy + Coral design system (doc 06).
+        Vachan.ai — your voice, on every channel. Made in India, for how India
+        actually talks.
       </footer>
     </main>
   );

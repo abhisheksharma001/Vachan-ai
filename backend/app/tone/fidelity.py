@@ -126,15 +126,33 @@ _JUDGE_SYS = (
 )
 
 
-def build_judge_messages(capsule_data: dict, candidate: str) -> list[dict]:
-    """Compile the judge prompt: voice + real anchors + the candidate reply."""
+# How to read each channel so the judge doesn't punish a CORRECT register shift
+# (the #39 fix: an English-channel reply was scored 2/5 for "lack of Hindi").
+_CHANNEL_NOTE: dict[str, str] = {
+    "chat": "",
+    "english": "CHANNEL = English: this reply SHOULD be in plain English with no "
+              "Hindi/Hinglish. Do NOT lower the score for missing Hindi — judge "
+              "whether their warmth, directness and rhythm survive in English.",
+    "email": "CHANNEL = Email: this reply SHOULD read as a short email (greeting / "
+             "body / sign-off) and may be a touch more composed than their chat. "
+             "Judge the voice inside that format, not the format itself.",
+    "voice": "CHANNEL = Voice: this reply will be SPOKEN aloud — short clauses, no "
+             "emoji or markdown, numbers spelled out. Judge whether it still sounds "
+             "like them out loud, not whether it looks like their typing.",
+}
+
+
+def build_judge_messages(capsule_data: dict, candidate: str, channel: str = "chat") -> list[dict]:
+    """Compile the judge prompt: voice + real anchors + channel note + the reply."""
     voice = str(capsule_data.get("voice_description", "")).strip()
     anchors = capsule_data.get("anchors", [])[:8]
     examples = "\n".join(f"- {a.get('in', '')}" for a in anchors if a.get("in"))
+    note = _CHANNEL_NOTE.get(channel, "")
     user = (
         f"VOICE:\n{voice}\n\n"
         f"REAL EXAMPLES of how they write:\n{examples or '(none provided)'}\n\n"
-        f"CANDIDATE REPLY:\n{candidate}\n\n"
+        + (f"{note}\n\n" if note else "")
+        + f"CANDIDATE REPLY:\n{candidate}\n\n"
         "Score it now."
     )
     return [
@@ -171,7 +189,7 @@ def _parse_json(text: str) -> dict | None:
         return None
 
 
-async def judge_voice(capsule_data: dict, candidate: str) -> tuple[float, str]:
+async def judge_voice(capsule_data: dict, candidate: str, channel: str = "chat") -> tuple[float, str]:
     """Score the candidate 1.0–5.0 with a one-sentence reason. Neutral 3.0 on failure."""
     if not (candidate or "").strip():
         return 1.0, "empty reply"
@@ -180,7 +198,7 @@ async def judge_voice(capsule_data: dict, candidate: str) -> tuple[float, str]:
     try:
         resp = await complete_with_alias(
             _judge_alias(),
-            build_judge_messages(capsule_data, candidate),
+            build_judge_messages(capsule_data, candidate, channel),
             max_tokens=200,
             temperature=0.0,  # deterministic scoring
         )
@@ -222,6 +240,7 @@ async def score_reply(
     capsule_data: dict,
     candidate: str,
     *,
+    channel: str = "chat",
     av_cosine: float | None = None,
     centroid_distance: float | None = None,
 ) -> FidelityResult:
@@ -234,7 +253,7 @@ async def score_reply(
     hard_pass, violations = check_hard_rules(candidate, capsule_data.get("hard_rules", {}))
     cmi_target = float(capsule_data.get("language", {}).get("cmi_target", 0.0))
     cmi_ok, cmi_out = check_cmi_conformance(candidate, cmi_target)
-    judge_score, judge_reason = await judge_voice(capsule_data, candidate)
+    judge_score, judge_reason = await judge_voice(capsule_data, candidate, channel)
     pfs, basis = compute_pfs(judge_score, av_cosine, centroid_distance)
     passed = hard_pass and pfs >= C.PFS_GATE_THRESHOLD
     return FidelityResult(

@@ -160,9 +160,9 @@ export default function MirrorPage() {
           <div className={styles.introEyebrow}>The Mirror</div>
           <h1 className={styles.introTitle}>Paste your writing. Meet your clone.</h1>
           <p className={styles.introSub}>
-            Drop in a few of your real messages (Hinglish welcome). We sanitize PII
-            locally, measure your voice, and you can chat with a clone that sounds
-            like you — scored live.
+            Drop in a few of your real messages — Hinglish, typos, all of it. We
+            scrub the private bits, learn how you talk, and you can chat with a
+            clone that sounds like you. Scored live, no fluff.
           </p>
 
           <div className={styles.pasteCard}>

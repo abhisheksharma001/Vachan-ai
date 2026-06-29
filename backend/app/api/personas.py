@@ -336,6 +336,7 @@ async def chat_with_clone(
             await score_reply(
                 capsule_data,
                 reply,
+                channel=register.name,
                 av_cosine=av_cosine,
                 centroid_distance=centroid_distance,
             )

@@ -84,6 +84,14 @@ def test_judge_messages_compile():
     assert "scene kya hai aaj ka" in msgs[1]["content"]     # a real anchor
 
 
+def test_judge_is_register_aware():
+    """#39: the English channel tells the judge NOT to dock points for no Hindi."""
+    chat = fidelity.build_judge_messages(_CAPSULE, "all good", channel="chat")[1]["content"]
+    eng = fidelity.build_judge_messages(_CAPSULE, "all good", channel="english")[1]["content"]
+    assert "CHANNEL" not in chat                 # chat adds no note
+    assert "English" in eng and "Do NOT lower the score" in eng
+
+
 @pytest.mark.skipif(
     not get_settings().GROQ_API_KEY,
     reason="GROQ_API_KEY not set — skipping live judge call",
