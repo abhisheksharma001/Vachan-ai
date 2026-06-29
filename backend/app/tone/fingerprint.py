@@ -88,6 +88,39 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
     return arr / norms
 
 
+# ── persona drift (centroid-vs-centroid) ──────────────────────────────────
+def centroid_cosine(old, new) -> float | None:
+    """Cosine between two STORED style centroids (768-float lists). This is the
+    persona-collapse signal: how much a rebuilt capsule's fingerprint moved from
+    the one before it. Returns None when either side is missing or the zero
+    placeholder — there's simply nothing to compare (first capsule, or a box
+    without the neural stack), and we never fabricate a number (RULE 5)."""
+    if is_zero_vector(old) or is_zero_vector(new):
+        return None
+    a = np.asarray(old, dtype=np.float32)
+    b = np.asarray(new, dtype=np.float32)
+    if a.shape != b.shape:
+        return None
+    return round(max(-1.0, min(1.0, _cosine(a, b))), 4)
+
+
+def drift_band(cosine: float | None) -> str:
+    """Band a centroid cosine into a persona-stability label.
+
+      cosine >= DRIFT_STABLE_MIN     → "stable"   (same person)
+      DRIFT_COLLAPSE_MAX .. STABLE   → "evolving" (real movement, allow + surface)
+      cosine <  DRIFT_COLLAPSE_MAX   → "collapse" (likely alien/noisy data, ALERT)
+      None                           → "unknown"  (nothing to compare yet)
+    """
+    if cosine is None:
+        return "unknown"
+    if cosine >= C.DRIFT_STABLE_MIN:
+        return "stable"
+    if cosine < C.DRIFT_COLLAPSE_MAX:
+        return "collapse"
+    return "evolving"
+
+
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     """Cosine of two raw vectors, guarded against zero-length."""
     na, nb = np.linalg.norm(a), np.linalg.norm(b)

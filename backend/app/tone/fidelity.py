@@ -38,6 +38,7 @@ from app.core.config import get_settings
 from app.core.llm import complete_with_alias, gateway_status
 from app.tone.features import message_features
 from app.tone.negativity import found_terms as _negative_terms
+from app.tone.registers import get_register
 
 # Broad emoji ranges — enough to enforce a "sparse" emoji hard rule.
 _EMOJI_RE = re.compile(
@@ -168,14 +169,33 @@ _CHANNEL_NOTE: dict[str, str] = {
 
 
 def build_judge_messages(capsule_data: dict, candidate: str, channel: str = "chat") -> list[dict]:
-    """Compile the judge prompt: voice + real anchors + channel note + the reply."""
+    """Compile the judge prompt: voice + real anchors + channel note + the reply.
+
+    Cross-language fix: the judge sees the SAME exemplars the renderer used for
+    this channel (reg.anchor_key). On the english channel that means the
+    English-translated anchors — so the judge has SAME-PERSON, SAME-LANGUAGE
+    reference points and stops docking the score for "missing Hindi" (the old
+    ceiling: an English reply graded against Hinglish examples scored ~2/5)."""
     voice = str(capsule_data.get("voice_description", "")).strip()
-    anchors = capsule_data.get("anchors", [])[:8]
+    reg = get_register(channel)
+    # Prefer the channel's anchor set; fall back to the raw anchors if that
+    # channel-specific list isn't populated yet (e.g. no english translation).
+    channel_anchors = capsule_data.get(reg.anchor_key)
+    used_translated = reg.anchor_key == "anchors_english" and bool(channel_anchors)
+    anchors = (channel_anchors or capsule_data.get("anchors", []))[:8]
     examples = "\n".join(f"- {a.get('in', '')}" for a in anchors if a.get("in"))
+    # Label the examples by the language ACTUALLY shown — only call them English
+    # when we really used the translated set (never on the Hinglish fallback,
+    # which would tell the judge a Hinglish example is English).
+    ex_label = (
+        "REAL EXAMPLES of how they write, rendered in English (same person):"
+        if used_translated
+        else "REAL EXAMPLES of how they write:"
+    )
     note = _CHANNEL_NOTE.get(channel, "")
     user = (
         f"VOICE:\n{voice}\n\n"
-        f"REAL EXAMPLES of how they write:\n{examples or '(none provided)'}\n\n"
+        f"{ex_label}\n{examples or '(none provided)'}\n\n"
         + (f"{note}\n\n" if note else "")
         + f"CANDIDATE REPLY:\n{candidate}\n\n"
         "Score it now."

@@ -30,7 +30,7 @@ from app.core.db import org_scoped_session
 from app.core.llm import complete_with_alias, gateway_status
 from app.models.tables import Persona, PersonaCapsule, PersonaObservation
 from app.tone.features import aggregate_features
-from app.tone.fingerprint import compute_centroid
+from app.tone.fingerprint import centroid_cosine, compute_centroid, drift_band
 from app.tone.ingest import cold_start_band
 from app.tone.negativity import is_toxic
 
@@ -336,6 +336,20 @@ async def build_capsule(
         fingerprint = await compute_centroid(sanitized_exemplars)
         capsule["has_fingerprint"] = fingerprint is not None
 
+        # DRIFT / merge-gate: how far this rebuild moved from the previous capsule's
+        # fingerprint. "collapse" means the new capture looks like a DIFFERENT person
+        # (alien/noisy data) — we keep the version (append-only) but flag it loudly so
+        # a future auto-send gate / review UI can refuse to USE a collapsed persona.
+        prev_fp = prev.fingerprint_vector if prev else None
+        drift_cos = centroid_cosine(prev_fp, fingerprint)
+        band = drift_band(drift_cos)
+        capsule["drift"] = {
+            "cosine": drift_cos,            # None on the first capsule / no neural stack
+            "band": band,                   # stable | evolving | collapse | unknown
+            "vs_version": prev.version if prev else None,
+            "alert": band == "collapse",    # the one a human should look at
+        }
+
         yaml_rendered = render_yaml(persona, capsule)
         session.add(
             PersonaCapsule(
@@ -358,4 +372,5 @@ async def build_capsule(
         "anchors": len(anchors),
         "enriched": capsule["enriched"],
         "has_fingerprint": capsule["has_fingerprint"],
+        "drift": capsule["drift"],
     }

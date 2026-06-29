@@ -131,6 +131,23 @@ PFS_GATE_THRESHOLD = 0.78
 
 
 # ════════════════════════════════════════════════════════════════════
+# PERSONA DRIFT / MERGE-GATE  (the "persona collapse" guard)
+# ════════════════════════════════════════════════════════════════════
+# All three research councils named persona collapse — a good persona silently
+# overwritten by a bad capture (someone pastes a DIFFERENT person's chat, or a
+# noisy export) — as the #1 product risk. When a capsule is rebuilt we compare
+# the NEW style centroid to the stored one (cosine in mStyleDistance space) and
+# band the result. Append-only means we never drop the version; we FLAG it so a
+# future auto-send gate / review UI can refuse to USE a collapsed persona.
+#
+#   cosine >= STABLE_MIN     → "stable"   : same person, accept silently
+#   COLLAPSE_MAX..STABLE_MIN → "evolving" : real movement, surface but allow
+#   cosine <  COLLAPSE_MAX   → "collapse" : likely alien/noisy data, ALERT
+DRIFT_STABLE_MIN = 0.85
+DRIFT_COLLAPSE_MAX = 0.60
+
+
+# ════════════════════════════════════════════════════════════════════
 # MESSAGE PIPELINE  (docs/05 — channel names + observation source types)
 # ════════════════════════════════════════════════════════════════════
 # Channel identifiers. The normalized contract (channels/contract.py) and every

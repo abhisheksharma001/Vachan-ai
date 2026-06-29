@@ -108,6 +108,32 @@ def test_judge_is_register_aware():
     assert "English" in eng and "Do NOT lower the score" in eng
 
 
+def test_judge_english_sees_english_anchors_not_hinglish():
+    """Cross-language fix: with anchors_english present, the english judge is shown
+    the ENGLISH exemplars (same person, same language) — so it grades English
+    against English, not against the Hinglish ones. This is what broke the old
+    ~2/5 ceiling. Chat still sees the raw Hinglish anchors."""
+    cap = {**_CAPSULE, "anchors_english": [{"in": "yeah it'll get done, don't stress"}]}
+
+    eng = fidelity.build_judge_messages(cap, "all good", channel="english")[1]["content"]
+    assert "it'll get done" in eng                  # english reference shown
+    assert "haan bhai ho jayega" not in eng         # raw Hinglish NOT shown
+    assert "rendered in English" in eng             # examples labelled by language
+
+    # chat is unchanged — still grades against the real Hinglish voice.
+    chat = fidelity.build_judge_messages(cap, "haan bhai", channel="chat")[1]["content"]
+    assert "haan bhai ho jayega" in chat
+    assert "rendered in English" not in chat
+
+
+def test_judge_english_falls_back_to_hinglish_when_no_translation():
+    """No anchors_english yet → the english judge falls back to the raw anchors
+    rather than showing nothing (graceful degradation)."""
+    eng = fidelity.build_judge_messages(_CAPSULE, "all good", channel="english")[1]["content"]
+    assert "haan bhai ho jayega" in eng             # fallback to real anchors
+    assert "rendered in English" not in eng         # not labelled as translated
+
+
 @pytest.mark.skipif(
     not get_settings().GROQ_API_KEY,
     reason="GROQ_API_KEY not set — skipping live judge call",

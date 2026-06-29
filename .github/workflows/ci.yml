@@ -1,0 +1,56 @@
+name: CI
+
+# The deterministic regression guard. Runs on every push and PR so a change
+# that breaks the persona logic (judge anchor selection, drift bands, pacing,
+# toxicity, PFS math) goes red BEFORE merge — no API keys, no Postgres, no Redis.
+#
+# Why a subset: the live tests (real LLM calls) are gated on GROQ/ANTHROPIC keys
+# and skip themselves when the keys are absent — which they are in CI, by design,
+# so we never spend tokens or leak secrets on a public runner. The DB/Redis
+# integration tests need running services; those run locally / in a later staged
+# job. What's left is the pure logic — exactly what must never silently regress.
+
+on:
+  push:
+    branches: ["main", "phase2-hardening"]
+  pull_request:
+
+jobs:
+  backend-guard:
+    name: backend deterministic guard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Never touch the network for model weights or providers on CI:
+      # the neural fingerprint tests skip when the weights aren't cached, and
+      # the live LLM tests skip when no API key is set. Both are by design.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Small spaCy model for the PII sanitizer tests (RULE 6 — these must run).
+          python -m spacy download en_core_web_sm
+
+      - name: Run deterministic guard (no keys, no services)
+        run: |
+          pytest tests/ -q \
+            --ignore=tests/test_capsule.py \
+            --ignore=tests/test_capture.py \
+            --ignore=tests/test_pipeline.py \
+            --ignore=tests/test_registers.py \
+            --ignore=tests/test_renderer.py \
+            --ignore=tests/test_voice_kb.py \
+            --ignore=tests/test_rls.py
