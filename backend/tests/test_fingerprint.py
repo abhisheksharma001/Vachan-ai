@@ -55,6 +55,29 @@ async def test_signals_skip_on_empty_candidate():
     assert av is None and dist is None
 
 
+# ── deterministic: persona drift (centroid-vs-centroid) ──────────────────
+def test_centroid_cosine_math_and_guards():
+    # identical centroids → perfectly stable
+    assert fp.centroid_cosine([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) == 1.0
+    # orthogonal → 0.0 (the cosine is normalized internally, magnitudes don't matter)
+    assert fp.centroid_cosine([1.0, 0.0], [0.0, 5.0]) == 0.0
+    # ~45° → ~0.707
+    assert fp.centroid_cosine([1.0, 0.0], [1.0, 1.0]) == pytest.approx(0.7071, abs=1e-3)
+    # nothing to compare → None (never fabricated)
+    assert fp.centroid_cosine(None, [1.0, 0.0]) is None
+    assert fp.centroid_cosine([0.0, 0.0], [1.0, 0.0]) is None        # zero placeholder
+    assert fp.centroid_cosine([1.0, 0.0, 0.0], [1.0, 0.0]) is None   # shape mismatch
+
+
+def test_drift_band_thresholds():
+    assert fp.drift_band(None) == "unknown"
+    assert fp.drift_band(0.99) == "stable"
+    assert fp.drift_band(C.DRIFT_STABLE_MIN) == "stable"            # boundary is stable
+    assert fp.drift_band(0.72) == "evolving"
+    assert fp.drift_band(C.DRIFT_COLLAPSE_MAX) == "evolving"        # boundary allows
+    assert fp.drift_band(0.40) == "collapse"                        # alien data → alert
+
+
 # ── live: gated on the model being present ───────────────────────────────
 @pytest.mark.skipif(not _HAS_MODEL, reason="mStyleDistance not installed — skipping neural test")
 async def test_centroid_is_unit_768():
