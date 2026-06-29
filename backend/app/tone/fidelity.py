@@ -37,6 +37,7 @@ from app.core import constants as C
 from app.core.config import get_settings
 from app.core.llm import complete_with_alias, gateway_status
 from app.tone.features import message_features
+from app.tone.negativity import found_terms as _negative_terms
 
 # Broad emoji ranges — enough to enforce a "sparse" emoji hard rule.
 _EMOJI_RE = re.compile(
@@ -109,6 +110,9 @@ def check_hard_rules(text: str, hard_rules: dict) -> tuple[bool, list[str]]:
     """Return (passed, violations). A non-empty violation list fails the gate."""
     low = (text or "").lower()
     violations = [p for p in _banned_phrases(hard_rules) if p in low]
+    # Output guard (#36): the clone must never SEND a slur, even if the persona
+    # uses them — a single hit fails the gate and triggers a regenerate/escalate.
+    violations += [f"negativity:{t}" for t in _negative_terms(text or "")]
     if hard_rules.get("emoji") == "sparse":
         n = len(_EMOJI_RE.findall(text or ""))
         if n > 2:

@@ -32,6 +32,7 @@ from app.models.tables import Persona, PersonaCapsule, PersonaObservation
 from app.tone.features import aggregate_features
 from app.tone.fingerprint import compute_centroid
 from app.tone.ingest import cold_start_band
+from app.tone.negativity import is_toxic
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 _BAND_CONFIDENCE = {"warming_up": 0.3, "calibrating": 0.6, "stable": 0.85}
@@ -74,8 +75,11 @@ async def _history_stats(session: AsyncSession, persona_id: str) -> dict:
 
 
 def _select_anchors(sanitized: list[str], prior: list[str]) -> list[str]:
-    """Pick representative exemplars: longer + more code-mixed first, deduped."""
+    """Pick representative exemplars: longer + more code-mixed first, deduped.
+    Toxic messages are excluded — anchors are 'imitate this', and we never want
+    the clone learning to say a slur (we still keep their stylometry elsewhere)."""
     pool = list(dict.fromkeys([*prior, *sanitized]))  # dedupe, keep order
+    pool = [m for m in pool if not is_toxic(m)]
     pool.sort(key=lambda m: len(m), reverse=True)
     return pool[:_ANCHOR_CAP]
 
