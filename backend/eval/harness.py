@@ -19,7 +19,11 @@ import asyncio
 import statistics as stats
 
 from app.core.config import get_settings
-from app.tone.capsule import _deterministic_capsule, _select_anchors
+from app.tone.capsule import (
+    _deterministic_capsule,
+    _select_anchors,
+    _translate_anchors_english,
+)
 from app.tone.capture import parse_pasted
 from app.tone.features import aggregate_features, message_features
 from app.tone.fidelity import score_reply
@@ -45,6 +49,8 @@ async def build_capsule_inmemory(sample: str) -> tuple[dict, list[float] | None]
     }
     anchors = _select_anchors(msgs, [])
     capsule = _deterministic_capsule(stats_in, agg, anchors)
+    # #40: english-translated exemplars so the english channel keeps the voice.
+    capsule["anchors_english"] = await _translate_anchors_english(capsule["anchors"])
     centroid = await compute_centroid(msgs)
     return capsule, centroid
 

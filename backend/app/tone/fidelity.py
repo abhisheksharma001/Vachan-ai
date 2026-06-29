@@ -81,17 +81,23 @@ class FidelityResult:
         return asdict(self)
 
 
-def pacing_match(text: str, avg_words: float) -> float | None:
-    """How close the reply's LENGTH is to the person's typical message length.
-    1.0 = right on their cadence, →0 as it runs much longer/shorter. None when
-    we have no length target yet. A real rhythm signal, not the old word-ratio
-    proxy the frontend used to fake."""
+# Per-channel length scaling (#41): the person's avg is measured on their CHAT.
+# Email and voice are legitimately longer/shorter, so we scale the target before
+# scoring — otherwise a correct 4-line email gets punished for not being a text.
+_PACING_FACTOR: dict[str, float] = {"chat": 1.0, "english": 1.0, "voice": 1.6, "email": 4.0}
+
+
+def pacing_match(text: str, avg_words: float, channel: str = "chat") -> float | None:
+    """How close the reply's LENGTH is to the person's typical length FOR THIS
+    CHANNEL. 1.0 = on cadence, →0 as it runs much longer/shorter. None with no
+    target. A real rhythm signal, not the old word-ratio proxy."""
     if not avg_words or avg_words <= 0:
         return None
+    target = avg_words * _PACING_FACTOR.get(channel, 1.0)
     words = len((text or "").split())
-    # Symmetric relative error, tolerant: a reply up to ~2x their length still
+    # Symmetric relative error, tolerant: a reply up to ~2x the target still
     # scores partial credit rather than snapping to zero.
-    rel = abs(words - avg_words) / max(avg_words, 1.0)
+    rel = abs(words - target) / max(target, 1.0)
     return round(max(0.0, 1.0 - rel / 2.0), 4)
 
 
@@ -273,7 +279,7 @@ async def score_reply(
     hard_pass, violations = check_hard_rules(candidate, capsule_data.get("hard_rules", {}))
     cmi_target = float(lang.get("cmi_target", 0.0))
     cmi_ok, cmi_out = check_cmi_conformance(candidate, cmi_target)
-    pacing = pacing_match(candidate, float(lang.get("avg_message_words", 0.0)))
+    pacing = pacing_match(candidate, float(lang.get("avg_message_words", 0.0)), channel)
     judge_score, judge_reason = await judge_voice(capsule_data, candidate, channel)
     pfs, basis = compute_pfs(judge_score, av_cosine, centroid_distance)
     passed = hard_pass and pfs >= C.PFS_GATE_THRESHOLD

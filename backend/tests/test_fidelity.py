@@ -92,6 +92,14 @@ def test_pacing_match():
     assert 0.0 <= fidelity.pacing_match("one two three", 12) <= 1.0
 
 
+def test_pacing_is_register_scaled():
+    """#41: email/voice are legitimately longer, so the target scales by channel."""
+    twenty = " ".join(["w"] * 20)
+    # a 20-word reply is 4x a 5-word chat avg → bad on chat, perfect on email
+    assert fidelity.pacing_match(twenty, 5, "chat") < 0.5
+    assert fidelity.pacing_match(twenty, 5, "email") == 1.0   # target 5*4 = 20
+
+
 def test_judge_is_register_aware():
     """#39: the English channel tells the judge NOT to dock points for no Hindi."""
     chat = fidelity.build_judge_messages(_CAPSULE, "all good", channel="chat")[1]["content"]

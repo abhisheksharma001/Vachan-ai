@@ -215,6 +215,43 @@ async def _llm_enrich(capsule: dict, stats: dict, anchors: list[str]) -> None:
         return  # enrichment is best-effort; the deterministic capsule stands
 
 
+_TRANSLATE_SYS = (
+    "Translate each casual Hinglish message into natural, casual ENGLISH. Keep the "
+    "SAME tone, energy, warmth and directness — it's the same person, just speaking "
+    "English. Use NO Hindi words. Reply with STRICT JSON only, no prose, no code "
+    'fences: {"english": ["...", "..."]} in the SAME order as the inputs.'
+)
+
+
+async def _translate_anchors_english(anchors: list[dict]) -> list[dict]:
+    """Translate the IN anchors to English ONCE, so the english channel can keep
+    the VOICE (warmth/directness) without the code-mixing. Best-effort: returns []
+    if no gateway — the english register then shows no anchors (safe fallback)."""
+    if gateway_status() != "connected":
+        return []
+    ins = [a.get("in", "") for a in anchors if a.get("in")]
+    if not ins:
+        return []
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(ins))
+    try:
+        resp = await complete_with_alias(
+            C.ALIAS_GROQ,
+            [
+                {"role": "system", "content": _TRANSLATE_SYS},
+                {"role": "user", "content": numbered},
+            ],
+            max_tokens=700,
+            temperature=0.3,
+        )
+        data = _parse_json(resp.choices[0].message.content or "")
+        outs = data.get("english") if data else None
+        if isinstance(outs, list):
+            return [{"in": str(o).strip()} for o in outs if str(o).strip()]
+    except Exception:
+        return []
+    return []
+
+
 # ── rendering ────────────────────────────────────────────────────────────
 def render_yaml(persona: Persona, capsule: dict) -> str:
     """Render the human-readable persona.md (YAML front-matter + Markdown body)."""
@@ -289,6 +326,9 @@ async def build_capsule(
         capsule = _deterministic_capsule(stats, batch_agg, anchors)
         capsule["version"] = next_version
         await _llm_enrich(capsule, stats, anchors)
+        # English-translated exemplars for the english channel (#40) — keeps the
+        # voice without the code-mixing. Best-effort; empty if no gateway.
+        capsule["anchors_english"] = await _translate_anchors_english(capsule["anchors"])
 
         # NEURAL fingerprint (Slice 1.5): the style centroid over the person's own
         # sanitized messages. None when the model isn't installed/loadable, in which

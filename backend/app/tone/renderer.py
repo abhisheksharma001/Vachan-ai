@@ -112,7 +112,7 @@ def build_system_prompt(capsule_data: dict, register: Register | None = None) ->
     emoji_rule = "none" if reg.drop_emoji else hr.get("emoji", "sparse")
     lines.append(f"EMOJI: {emoji_rule}.")
 
-    anchors = capsule_data.get("anchors", [])[:_MAX_ANCHORS] if reg.keep_anchors else []
+    anchors = capsule_data.get(reg.anchor_key, [])[:_MAX_ANCHORS] if reg.keep_anchors else []
     if anchors:
         lines.append("")
         lines.append("Examples — IN is THEIR real voice (imitate this style); "

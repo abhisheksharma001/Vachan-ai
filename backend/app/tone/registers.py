@@ -44,10 +44,11 @@ class Register:
     length_hint: str           # how long, and whether to burst into multiple messages
     tts_safe: bool             # voice: no markdown/emoji, spell numbers, speakable clauses
     drop_emoji: bool           # force emoji off regardless of the capsule's emoji rule
-    keep_anchors: bool         # show the captured (Hinglish) few-shot examples?
-                               # OFF for english — those examples are the single
-                               # strongest pull toward code-mixing, so no appended
-                               # instruction can out-vote them; we drop them instead.
+    keep_anchors: bool         # show few-shot examples at all?
+    anchor_key: str            # WHICH exemplars to show — "anchors" (their real
+                               # Hinglish) or "anchors_english" (English-translated,
+                               # so the english channel keeps the VOICE without the
+                               # code-mixing). Falls back to none if that list is empty.
     directive: str             # an emphatic, LAST-position instruction (recency wins)
 
 
@@ -64,6 +65,7 @@ REGISTERS: dict[str, Register] = {
         tts_safe=False,
         drop_emoji=False,
         keep_anchors=True,
+        anchor_key="anchors",
         directive="",
     ),
     "english": Register(
@@ -76,7 +78,11 @@ REGISTERS: dict[str, Register] = {
         length_hint="Keep it short and natural, like a real text.",
         tts_safe=False,
         drop_emoji=False,
-        keep_anchors=False,  # the Hinglish examples are what keep dragging it back to Hindi
+        # Use ENGLISH-translated exemplars (voice without the code-mixing). If the
+        # capsule has none yet, the list is empty → no anchors, which is the safe
+        # pure-English fallback (never the raw Hinglish ones).
+        keep_anchors=True,
+        anchor_key="anchors_english",
         directive="WRITE YOUR ENTIRE REPLY IN ENGLISH ONLY. Do not use ANY Hindi or "
                   "romanized-Hindi words (no 'yaar', 'bhai', 'haan', 'kar', 'hai', "
                   "'abhi', etc.). Keep the person's tone and energy, but every word "
@@ -94,6 +100,7 @@ REGISTERS: dict[str, Register] = {
         tts_safe=False,
         drop_emoji=False,
         keep_anchors=True,   # examples carry the voice; the directive forces the format
+        anchor_key="anchors",
         directive="FORMAT THIS AS AN EMAIL, not a chat message: start with a greeting "
                   "line (e.g. 'Hey <name>,'), then the body in their voice, then a "
                   "sign-off line (e.g. 'Thanks,' on its own line). Keep their warmth.",
@@ -111,6 +118,7 @@ REGISTERS: dict[str, Register] = {
         tts_safe=True,
         drop_emoji=True,
         keep_anchors=True,
+        anchor_key="anchors",
         directive="This will be SPOKEN ALOUD by a text-to-speech voice. No emoji, no "
                   "markdown, no symbols, no abbreviations. Spell numbers out in words. "
                   "Keep it to one or two short spoken sentences.",

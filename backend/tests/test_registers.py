@@ -88,6 +88,16 @@ def test_prompt_is_channel_framed():
     assert "WhatsApp" in chat or "text" in chat.lower()
 
 
+def test_english_uses_translated_anchors_when_present():
+    """#40: with anchors_english, the english channel shows the ENGLISH exemplars
+    (voice kept) — never the raw Hinglish ones."""
+    cap = {**_CAPSULE, "anchors_english": [{"in": "yeah it'll get done, don't stress"}]}
+    eng = renderer.build_system_prompt(apply_register(cap, get_register("english")),
+                                       get_register("english"))
+    assert "it'll get done" in eng          # the translated exemplar is shown
+    assert "haan bhai ho jayega" not in eng  # the raw Hinglish anchor is NOT
+
+
 # ── live: all channels reply; English de-mixes ───────────────────────────
 @pytest.mark.skipif(
     not get_settings().GROQ_API_KEY,
