@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import constants as C
@@ -41,6 +41,11 @@ router = APIRouter(prefix="/personas", tags=["personas"])
 class CreatePersonaRequest(BaseModel):
     name: str = Field(..., description="A label for this voice, e.g. 'My WhatsApp self'")
     language_primary: str = Field("hi-en", description="Primary language mix")
+
+
+class UpdatePersonaRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, description="New label for this voice")
+    language_primary: str | None = Field(None, min_length=1, description="Primary language mix")
 
 
 class CaptureRequest(BaseModel):
@@ -147,6 +152,123 @@ async def create_persona(
         }
 
 
+@router.get("")
+async def list_personas(
+    auth: AuthContext = Depends(get_current_auth),
+) -> list[dict]:
+    """List the caller's personas with a live observation count."""
+    async with org_scoped_session(auth.org_id) as session:
+        obs_count = (
+            select(func.count(PersonaObservation.id))
+            .where(PersonaObservation.persona_id == Persona.id)
+            .where(PersonaObservation.deleted_at.is_(None))
+            .correlate(Persona)
+            .scalar_subquery()
+        )
+        rows = (
+            await session.execute(
+                select(
+                    Persona.id,
+                    Persona.name,
+                    Persona.status,
+                    Persona.language_primary,
+                    Persona.current_capsule_version,
+                    Persona.created_at,
+                    obs_count.label("observations_count"),
+                )
+                .where(Persona.user_id == auth.user_id)
+                .where(Persona.deleted_at.is_(None))
+                .order_by(Persona.created_at.desc())
+            )
+        ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "status": r.status,
+            "language_primary": r.language_primary,
+            "current_capsule_version": r.current_capsule_version,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "observations_count": int(r.observations_count),
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/{persona_id}")
+async def update_persona(
+    persona_id: str,
+    body: UpdatePersonaRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Rename or change the primary language of a persona you own."""
+    async with org_scoped_session(auth.org_id) as session:
+        persona = await session.get(Persona, persona_id)
+        if persona is None or persona.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Persona not found.")
+        if str(persona.user_id) != auth.user_id:
+            raise HTTPException(
+                status_code=403, detail="You can only update personas you own."
+            )
+
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            raise HTTPException(status_code=400, detail="No fields provided to update.")
+        for key, value in updates.items():
+            setattr(persona, key, value)
+
+    return {
+        "persona_id": persona_id,
+        "name": persona.name,
+        "status": persona.status,
+        "language_primary": persona.language_primary,
+        "current_capsule_version": persona.current_capsule_version,
+    }
+
+
+@router.delete("/{persona_id}")
+async def delete_persona(
+    persona_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Soft-delete a persona and its observations + capsules."""
+    async with org_scoped_session(auth.org_id) as session:
+        persona = await session.get(Persona, persona_id)
+        if persona is None or persona.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Persona not found.")
+        if str(persona.user_id) != auth.user_id:
+            raise HTTPException(
+                status_code=403, detail="You can only delete personas you own."
+            )
+
+        # The append-only tables permit UPDATE only during an erasure workflow.
+        await session.execute(text("SET LOCAL app.allow_erasure = 'on'"))
+
+        await session.execute(
+            update(PersonaObservation)
+            .where(PersonaObservation.persona_id == persona_id)
+            .where(PersonaObservation.deleted_at.is_(None))
+            .values(deleted_at=func.now())
+        )
+        await session.execute(
+            update(PersonaCapsule)
+            .where(PersonaCapsule.persona_id == persona_id)
+            .where(PersonaCapsule.deleted_at.is_(None))
+            .values(deleted_at=func.now())
+        )
+        deleted_at = (
+            await session.execute(
+                update(Persona)
+                .where(Persona.id == persona_id)
+                .values(deleted_at=func.now())
+                .returning(Persona.deleted_at)
+            )
+        ).scalar_one()
+
+    return {"persona_id": persona_id, "deleted_at": deleted_at.isoformat()}
+
+
 @router.post("/{persona_id}/capture")
 async def capture_writing(
     persona_id: str,
@@ -198,7 +320,7 @@ async def get_persona(
         persona = (
             await session.execute(select(Persona).where(Persona.id == persona_id))
         ).scalar_one_or_none()
-        if persona is None:
+        if persona is None or persona.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Persona not found.")
 
         O = PersonaObservation
@@ -252,6 +374,7 @@ async def get_capsule(
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
@@ -284,6 +407,7 @@ async def get_voice_kb(
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
@@ -311,6 +435,7 @@ async def chat_with_clone(
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )

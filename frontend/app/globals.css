@@ -1,117 +1,178 @@
-/*
- * Vachan.ai design tokens — doc 06 §6.2 (Sandy + Coral).
- * RULE: components NEVER hardcode hex. Always use these CSS variables.
- * This is the single source of truth for the visual language.
- */
-:root {
-  /* ── SAND (canvas & surfaces) ── */
-  --sand-50:  #FBF7F1;   /* lightest cream — page background */
-  --sand-100: #F6EEE3;   /* default surface / cards */
-  --sand-200: #EFE2D2;   /* raised surface, hover fill */
-  --sand-300: #E4D2BC;   /* borders, dividers */
-  --sand-400: #D2B896;   /* muted lines, disabled */
-  --sand-500: #B9966B;   /* deep sand / secondary text on light */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-  /* ── CORAL (the accent = "the voice") ── */
-  --coral-300: #F6A98E;
-  --coral-400: #F08A6B;
-  --coral-500: #EC6A4C;  /* PRIMARY coral — buttons, clone bubbles, ring */
-  --coral-600: #D7503A;  /* hover / pressed */
-  --coral-700: #B23D2C;  /* deep coral — text on sand when needed */
+@custom-variant dark (&:is(.dark *));
 
-  /* ── CORAL-SAND BLEND (signature gradient) ── */
-  --blend-warm: linear-gradient(135deg, #F3C9A8 0%, #EC6A4C 100%);
-  --blend-soft: linear-gradient(135deg, #F6EEE3 0%, #F6A98E 100%);
+@theme inline {
+  /* Brand colors */
+  --color-sand-50: #FBF7F1;
+  --color-sand-100: #F6EEE3;
+  --color-sand-200: #EFE2D2;
+  --color-sand-300: #E4D2BC;
+  --color-sand-400: #D2B896;
+  --color-sand-500: #B9966B;
 
-  /* ── INK (text) ── */
-  --ink-900: #2C211A;    /* primary — warm near-black, NOT pure black */
-  --ink-700: #5A4A3D;    /* secondary */
-  --ink-500: #8A7563;    /* tertiary / captions */
+  --color-coral-300: #F6A98E;
+  --color-coral-400: #F08A6B;
+  --color-coral-500: #EC6A4C;
+  --color-coral-600: #D7503A;
+  --color-coral-700: #B23D2C;
 
-  /* ── SUPPORT / SEMANTIC ── */
-  --teal-500:  #2F8F83;  /* success / on-voice */
-  --amber-500: #C9852A;  /* warning / drifting */
-  --rose-600:  #B23D52;  /* error / off-voice / blocked */
+  --color-ink-900: #2C211A;
+  --color-ink-700: #5A4A3D;
+  --color-ink-500: #8A7563;
 
-  /* ── SHADOWS (warm, soft) ── */
-  --shadow-sm: 0 1px 2px rgba(78, 52, 34, 0.06);
-  --shadow-md: 0 6px 20px rgba(78, 52, 34, 0.10);
-  --shadow-lg: 0 18px 50px rgba(78, 52, 34, 0.14);
+  --color-teal-500: #2F8F83;
+  --color-amber-500: #C9852A;
+  --color-rose-600: #B23D52;
 
-  /* ── RADII ── */
+  /* Semantic / shadcn tokens mapped to Sandy+Coral */
+  --color-background: var(--sand-50);
+  --color-foreground: var(--ink-900);
+  --color-card: var(--sand-100);
+  --color-card-foreground: var(--ink-900);
+  --color-popover: var(--sand-100);
+  --color-popover-foreground: var(--ink-900);
+  --color-primary: var(--coral-500);
+  --color-primary-foreground: var(--sand-50);
+  --color-secondary: var(--sand-100);
+  --color-secondary-foreground: var(--ink-900);
+  --color-muted: var(--sand-200);
+  --color-muted-foreground: var(--ink-500);
+  --color-accent: var(--sand-200);
+  --color-accent-foreground: var(--ink-900);
+  --color-destructive: var(--rose-600);
+  --color-destructive-foreground: var(--sand-50);
+  --color-border: var(--sand-300);
+  --color-input: var(--sand-300);
+  --color-ring: var(--coral-500);
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-heading: var(--font-fraunces), Georgia, serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 24px;
+  --radius-xl: 32px;
   --radius-pill: 999px;
 
-  /* ── TYPE (wired to next/font CSS variables in layout.tsx) ── */
-  --font-display: var(--font-fraunces), Georgia, serif;
-  --font-body: var(--font-inter), system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --shadow-sm: 0 1px 2px rgba(78, 52, 34, 0.06);
+  --shadow-md: 0 6px 20px rgba(78, 52, 34, 0.10);
+  --shadow-lg: 0 18px 50px rgba(78, 52, 34, 0.14);
 }
 
-/* ── base reset ── */
-*,
-*::before,
-*::after { box-sizing: border-box; }
+@layer base {
+  :root {
+    --sand-50:  #FBF7F1;
+    --sand-100: #F6EEE3;
+    --sand-200: #EFE2D2;
+    --sand-300: #E4D2BC;
+    --sand-400: #D2B896;
+    --sand-500: #B9966B;
 
-html, body { padding: 0; margin: 0; }
+    --coral-300: #F6A98E;
+    --coral-400: #F08A6B;
+    --coral-500: #EC6A4C;
+    --coral-600: #D7503A;
+    --coral-700: #B23D2C;
 
-body {
-  background: var(--sand-50);
-  color: var(--ink-900);
-  font-family: var(--font-body);
-  font-size: 17px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+    --blend-warm: linear-gradient(135deg, #F3C9A8 0%, #EC6A4C 100%);
+    --blend-soft: linear-gradient(135deg, #F6EEE3 0%, #F6A98E 100%);
+
+    --ink-900: #2C211A;
+    --ink-700: #5A4A3D;
+    --ink-500: #8A7563;
+
+    --teal-500:  #2F8F83;
+    --amber-500: #C9852A;
+    --rose-600:  #B23D52;
+
+    --font-body: var(--font-inter), system-ui, sans-serif;
+    --font-display: var(--font-fraunces), Georgia, serif;
+
+    --shadow-sm: 0 1px 2px rgba(78, 52, 34, 0.06);
+    --shadow-md: 0 6px 20px rgba(78, 52, 34, 0.10);
+    --shadow-lg: 0 18px 50px rgba(78, 52, 34, 0.14);
+
+    --radius-sm: 10px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-pill: 999px;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html, body {
+    @apply antialiased;
+    padding: 0;
+    margin: 0;
+  }
+
+  body {
+    background: var(--sand-50);
+    color: var(--ink-900);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    color: var(--ink-900);
+    margin: 0;
+  }
+
+  h1 { font-size: clamp(44px, 6vw, 60px); line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(30px, 4vw, 36px); line-height: 1.1; }
+  h3 { font-size: 22px; line-height: 1.2; }
+
+  p { margin: 0; color: var(--ink-700); }
+
+  a { color: var(--coral-700); text-decoration: none; }
+  a:hover { color: var(--coral-600); }
+
+  :focus-visible {
+    outline: 2px solid var(--coral-500);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
 }
 
-h1, h2, h3 {
-  font-family: var(--font-display);
-  font-weight: 500;
-  color: var(--ink-900);
-  margin: 0;
-}
-h1 { font-size: clamp(44px, 6vw, 60px); line-height: 1.05; letter-spacing: -0.01em; }
-h2 { font-size: clamp(30px, 4vw, 36px); line-height: 1.1; }
-h3 { font-size: 22px; line-height: 1.2; }
+@layer components {
+  .label {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-500);
+  }
 
-p { margin: 0; color: var(--ink-700); }
-
-a { color: var(--coral-700); text-decoration: none; }
-a:hover { color: var(--coral-600); }
-
-/* Visible, on-brand focus ring (§6.8 accessibility). */
-:focus-visible {
-  outline: 2px solid var(--coral-500);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-/* Small uppercase label (§6.3). */
-.label {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-500);
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: var(--radius-pill);
+    background: var(--sand-100);
+    border: 1px solid var(--sand-300);
+    color: var(--ink-700);
+  }
 }
 
-/* A pill chip used for status / section tags. */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  padding: 4px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--sand-100);
-  border: 1px solid var(--sand-300);
-  color: var(--ink-700);
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
 }
 
-/* Respect reduced-motion globally (§6.7). */
+/* Respect reduced-motion globally (doc 06 §6.7). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

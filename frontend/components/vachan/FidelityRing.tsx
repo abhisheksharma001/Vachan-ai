@@ -1,44 +1,25 @@
 /*
- * Fidelity Ring ("Clone Calibration") — doc 06 §6.5 #4, the signature data-viz.
+ * Fidelity Ring ("Clone Calibration") — doc 06 §6.5 #4.
  *
- * An SVG ring fills 0–100% with the sand→coral blend; the centre shows the PFS
- * as a big number + a one-word state. Below it, thin sub-bars for the signals
- * we can honestly measure today.
+ * SVG ring filled with the sand→coral blend; centre shows PFS + one-word state.
+ * Sub-bars for the signals we can honestly measure today.
  *
- * HONESTY (FD-4 / RULE 5):
- *  • The state word is band-capped — we never show "Strong/Indistinguishable"
- *    while the persona is still warming up or calibrating, no matter the score.
- *  • PFS is PROVISIONAL when a capsule has no neural fingerprint yet (judge-only
- *    basis): we flag that with a "provisional" chip and grey out the Style-match
- *    (AV-cosine) sub-bar. With a fingerprint (Slice 1.5), both light up.
+ * HONESTY:
+ *  • State word is band-capped — never overclaim while warming/calibrating.
+ *  • PFS is PROVISIONAL when the capsule has no neural fingerprint yet.
  */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import type { Fidelity } from "@/lib/types";
 
-import styles from "./FidelityRing.module.css";
-
-export type Fidelity = {
-  pfs: number | null;
-  pfs_basis?: string;
-  judge_score?: number | null;
-  judge_reason?: string;
-  cmi_output?: number | null;
-  cmi_target?: number | null;
-  hard_rule_pass?: boolean;
-  hard_rule_violations?: string[];
-  // Slice 1.5 — the NEURAL style signals (null when no fingerprint yet).
-  av_cosine?: number | null;
-  centroid_distance?: number | null;
-  // Phase 2 — reply length vs the person's cadence (0..1, null if no target).
-  pacing_match?: number | null;
-};
+export type { Fidelity };
 
 function stateWord(pfs: number, band?: string): string {
   if (band === "warming_up") return "Warming up";
   const byScore =
     pfs >= 0.9 ? "Indistinguishable" : pfs >= 0.8 ? "Strong" : pfs >= 0.65 ? "Good" : "Calibrating";
-  // FD-4: below "stable", never overclaim — cap at "Good".
   if (band === "calibrating" && (byScore === "Indistinguishable" || byScore === "Strong")) {
     return "Good";
   }
@@ -60,7 +41,7 @@ function useCountUp(target: number, ms = 900): number {
     const start = performance.now();
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / ms);
-      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      const eased = 1 - Math.pow(1 - t, 3);
       setVal(target * eased);
       if (t < 1) raf.current = requestAnimationFrame(tick);
     };
@@ -76,17 +57,36 @@ function band(value: number): "high" | "mid" | "low" {
   return value >= 0.66 ? "high" : value >= 0.33 ? "mid" : "low";
 }
 
-function SubBar({ label, value, note }: { label: string; value: number | null; note?: string }) {
+function SubBar({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: number | null;
+  note?: string;
+}) {
   const pct = value == null ? 0 : Math.round(value * 100);
   const tier = value == null ? "muted" : band(value);
   return (
-    <div className={styles.subRow}>
-      <div className={styles.subHead}>
-        <span className={styles.subLabel}>{label}</span>
-        <span className={styles.subVal}>{value == null ? (note ?? "—") : `${pct}%`}</span>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-ink-700">{label}</span>
+        <span className="font-medium text-ink-900">
+          {value == null ? (note ?? "—") : `${pct}%`}
+        </span>
       </div>
-      <div className={styles.track}>
-        <div className={`${styles.fill} ${styles[tier]}`} style={{ width: `${pct}%` }} />
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-sand-200">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-500",
+            tier === "high" && "bg-teal-500",
+            tier === "mid" && "bg-amber-500",
+            tier === "low" && "bg-coral-500",
+            tier === "muted" && "bg-sand-300"
+          )}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -107,74 +107,87 @@ export function FidelityRing({
   const animated = useCountUp(pfs);
   const offset = C * (1 - animated);
 
-  const provisional = fidelity?.pfs_basis === "judge_only";
+  const provisional = fidelity?.pfsBasis === "judge_only";
   const word = fidelity ? stateWord(pfs, personaBand) : "—";
 
-  // Sub-bars from what we can measure now.
-  const judge = fidelity?.judge_score != null ? fidelity.judge_score / 5 : null;
+  const judge = fidelity?.judgeScore != null ? fidelity.judgeScore / 5 : null;
   const hinglish =
-    fidelity?.cmi_output != null && fidelity?.cmi_target != null
-      ? Math.max(0, 1 - Math.min(1, Math.abs(fidelity.cmi_output - fidelity.cmi_target) / 0.3))
+    fidelity?.cmiOutput != null && fidelity?.cmiTarget != null
+      ? Math.max(0, 1 - Math.min(1, Math.abs(fidelity.cmiOutput - fidelity.cmiTarget) / 0.3))
       : null;
 
   return (
-    <div className={styles.wrap}>
-      <div className={styles.ringHead}>
+    <div className="w-full max-w-xs space-y-5 rounded-xl border border-sand-300 bg-sand-100 p-5 shadow-sm">
+      <div className="flex items-center justify-between">
         <span className="label">Clone calibration</span>
         {provisional && (
-          <span className={styles.provisional} title="Full neural fingerprint lands in Slice 1.5">
+          <span
+            className="rounded-full bg-sand-200 px-2 py-0.5 text-xs font-medium text-ink-700"
+            title="Full neural fingerprint lands in Slice 1.5"
+          >
             provisional
           </span>
         )}
       </div>
 
-      <div className={styles.ringBox}>
-        <svg viewBox="0 0 200 200" className={styles.svg} role="img"
-             aria-label={`Fidelity ${Math.round(pfs * 100)} percent, ${word}`}>
+      <div className="relative mx-auto size-40">
+        <svg
+          viewBox="0 0 200 200"
+          className="size-full -rotate-90"
+          role="img"
+          aria-label={`Fidelity ${Math.round(pfs * 100)} percent, ${word}`}
+        >
           <defs>
             <linearGradient id="ringBlend" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#F3C9A8" />
               <stop offset="100%" stopColor="#EC6A4C" />
             </linearGradient>
           </defs>
-          <circle cx="100" cy="100" r={R} className={styles.ringTrack} />
           <circle
             cx="100"
             cy="100"
             r={R}
-            className={styles.ringFill}
+            className="fill-none stroke-sand-300"
+            strokeWidth="16"
+          />
+          <circle
+            cx="100"
+            cy="100"
+            r={R}
+            className="fill-none transition-all duration-500"
             stroke="url(#ringBlend)"
+            strokeWidth="16"
+            strokeLinecap="round"
             strokeDasharray={C}
             strokeDashoffset={offset}
-            transform="rotate(-90 100 100)"
           />
         </svg>
-        <div className={styles.center}>
-          <div className={styles.pfsNum}>{fidelity ? Math.round(animated * 100) : "—"}</div>
-          <div className={styles.pfsUnit}>% fidelity</div>
-          <div className={styles.word}>{word}</div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+          <div className="font-display text-4xl font-medium text-ink-900">
+            {fidelity ? Math.round(animated * 100) : "—"}
+          </div>
+          <div className="text-xs text-ink-500">% fidelity</div>
+          <div className="mt-1 text-sm font-medium text-coral-600">{word}</div>
         </div>
       </div>
 
-      <div className={styles.subBars}>
+      <div className="space-y-3">
         <SubBar label="Voice match (judge)" value={judge} />
         <SubBar label="Hinglish index" value={hinglish} />
         <SubBar label="Pacing match" value={pacing ?? null} />
-        {/* Slice 1.5 — the neural style/authorship signal. Greys to "—" when the
-            capsule has no fingerprint yet (PFS still judge-only). */}
         <SubBar
           label="Style match (neural)"
-          value={fidelity?.av_cosine ?? null}
+          value={fidelity?.avCosine ?? null}
           note="no fingerprint"
         />
       </div>
 
-      {fidelity?.judge_reason && (
-        <p className={styles.reason}>“{fidelity.judge_reason}”</p>
+      {fidelity?.judgeReason && (
+        <p className="text-sm italic text-ink-700">“{fidelity.judgeReason}”</p>
       )}
-      {fidelity && fidelity.hard_rule_pass === false && (
-        <p className={styles.blocked}>
-          Blocked by hard rules: {fidelity.hard_rule_violations?.join(", ")}
+      {fidelity && fidelity.hardRulePass === false && (
+        <p className="text-sm text-rose-600">
+          Blocked by hard rules: {fidelity.hardRuleViolations?.join(", ")}
         </p>
       )}
     </div>
