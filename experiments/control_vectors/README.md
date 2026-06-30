@@ -83,9 +83,11 @@ the English dial is enough for now.
   card; restart the session.
 
 ## Next, after the spike proves out
-1. **Per-persona vector** — build the contrast from a persona's *own* anchors
-   (their Hinglish vs the English-translated anchors we already store) → a
-   personalized dial.
+1. **Per-persona vector** ✅ scaffolded →
+   [`per_persona_control_vector_kaggle.ipynb`](per_persona_control_vector_kaggle.ipynb).
+   Builds the contrast from a persona's *own* anchors (their Hinglish vs the
+   English-translated anchors we already store) → a personalized dial. Paste-based
+   for standalone use; pull straight from the capsule in production.
 2. **Serving** — control vectors need *our* forward pass (Groq can't inject), so
    the steered model runs behind vLLM/transformers on a serverless GPU, only for
    high-value personas the PFS gate keeps failing (the documented Path-B trigger).
