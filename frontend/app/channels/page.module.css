@@ -1,0 +1,120 @@
+.page {
+  min-height: 100vh;
+  background: var(--sand-50);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px 24px;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.wordmark span {
+  color: var(--coral-500);
+}
+
+.navLinks {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.navLink {
+  display: none;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink-700);
+}
+
+.navLink:hover {
+  color: var(--coral-700);
+}
+
+@media (min-width: 640px) {
+  .navLink {
+    display: block;
+  }
+}
+
+.main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+.pageHeader {
+  margin-bottom: 40px;
+}
+
+.title {
+  font-size: clamp(32px, 5vw, 48px);
+  margin-bottom: 10px;
+}
+
+.lead {
+  font-size: 17px;
+  color: var(--ink-700);
+  max-width: 560px;
+}
+
+.section {
+  margin-bottom: 48px;
+}
+
+.sectionTitle {
+  font-size: 22px;
+  margin-bottom: 18px;
+}
+
+.exportGrid {
+  display: grid;
+  gap: 20px;
+}
+
+@media (min-width: 640px) {
+  .exportGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.exportCard {
+  background: var(--sand-100);
+  border: 1px solid var(--sand-300);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exportBody {
+  font-size: 15px;
+  line-height: 1.7;
+  flex: 1;
+}
+
+.exportAction {
+  align-self: flex-start;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--coral-700);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.exportAction:hover {
+  color: var(--coral-600);
+}

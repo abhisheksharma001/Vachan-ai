@@ -1,5 +1,5 @@
 /*
- * Vachan.ai design tokens — doc 06 §6.2 (Sandy + Coral).
+ * Vachan.ai design tokens — 2026 edition (doc 06 + UIUX deep wiki).
  * RULE: components NEVER hardcode hex. Always use these CSS variables.
  * This is the single source of truth for the visual language.
  */
@@ -7,6 +7,7 @@
   /* ── SAND (canvas & surfaces) ── */
   --sand-50:  #FBF7F1;   /* lightest cream — page background */
   --sand-100: #F6EEE3;   /* default surface / cards */
+  --sand-150: #F3E9DA;   /* hover fill (new) */
   --sand-200: #EFE2D2;   /* raised surface, hover fill */
   --sand-300: #E4D2BC;   /* borders, dividers */
   --sand-400: #D2B896;   /* muted lines, disabled */
@@ -37,23 +38,60 @@
   --shadow-sm: 0 1px 2px rgba(78, 52, 34, 0.06);
   --shadow-md: 0 6px 20px rgba(78, 52, 34, 0.10);
   --shadow-lg: 0 18px 50px rgba(78, 52, 34, 0.14);
+  --shadow-xl: 0 32px 64px rgba(78, 52, 34, 0.18);
 
   /* ── RADII ── */
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 24px;
+  --radius-xl: 32px;
   --radius-pill: 999px;
 
   /* ── TYPE (wired to next/font CSS variables in layout.tsx) ── */
   --font-display: var(--font-fraunces), Georgia, serif;
   --font-body: var(--font-inter), system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  /* ── MOTION (2026) ── */
+  --duration-instant: 80ms;
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --duration-enter: 500ms;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-snap: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── DARK MODE (V1+) ── */
+[data-theme="dark"] {
+  --sand-50:  #1A1512;
+  --sand-100: #262019;
+  --sand-150: #332A20;
+  --sand-200: #3D3227;
+  --sand-300: #5A4A3D;
+  --sand-400: #7A6555;
+  --sand-500: #A38B76;
+
+  --ink-900:  #F6EEE3;
+  --ink-700:  #D8C8B6;
+  --ink-500:  #A38B76;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.50);
+  --shadow-xl: 0 32px 64px rgba(0, 0, 0, 0.55);
 }
 
 /* ── base reset ── */
 *,
 *::before,
 *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+}
 
 html, body { padding: 0; margin: 0; }
 
@@ -111,12 +149,46 @@ a:hover { color: var(--coral-600); }
   color: var(--ink-700);
 }
 
+/* Screen-reader-only utility. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip-to-content link. */
+.skipLink {
+  position: absolute;
+  top: -40px;
+  left: 16px;
+  z-index: 100;
+  padding: 8px 16px;
+  background: var(--coral-500);
+  color: var(--sand-50);
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  transition: top var(--duration-fast) var(--ease-out);
+}
+.skipLink:focus {
+  top: 16px;
+  outline: 2px solid var(--sand-50);
+  outline-offset: 2px;
+}
+
 /* Respect reduced-motion globally (§6.7). */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

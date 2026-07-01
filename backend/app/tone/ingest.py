@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import constants as C
 from app.core.db import org_scoped_session
 from app.core.pii import sanitize_structured
-from app.models.tables import Persona, PersonaObservation
+from app.memory import store as memory_store
+from app.models.tables import MemoryFragment, Persona, PersonaObservation
 from app.tone import capture
 from app.tone.features import aggregate_features, message_features
 
@@ -69,6 +70,7 @@ async def ingest_messages(
     Returns (stored, skipped, sanitized_messages). Caller owns the transaction.
     """
     stored, skipped, sanitized_all = 0, 0, []
+    observations: list[tuple[PersonaObservation, str]] = []
     for raw in messages:
         scrubbed = sanitize_structured(raw).text.strip()
         if not scrubbed:
@@ -78,21 +80,41 @@ async def ingest_messages(
         if feats.token_count == 0:
             skipped += 1
             continue
-        session.add(
-            PersonaObservation(
-                org_id=org_id,
-                persona_id=persona_id,
-                source_type=source_type,
-                text_hash=_sha256(scrubbed),
-                consent_ref=consent_id,
-                **feats.as_obs_columns(),  # token_count + the 8 style columns
-            )
+        obs = PersonaObservation(
+            org_id=org_id,
+            persona_id=persona_id,
+            source_type=source_type,
+            text_hash=_sha256(scrubbed),
+            consent_ref=consent_id,
+            **feats.as_obs_columns(),  # token_count + the 8 style columns
         )
+        session.add(obs)
+        observations.append((obs, scrubbed))
         sanitized_all.append(scrubbed)
         stored += 1
+
     # Our sessions use autoflush=False, so flush now — otherwise a SUM/COUNT
     # over these rows in the same transaction would not see them yet.
     await session.flush()
+
+    # Batch-embed and store retrievable semantic memory fragments.
+    if observations:
+        texts = [text for _, text in observations]
+        vectors = await memory_store.embedder.encode_fragments_async(texts)
+        if vectors:
+            for (obs, text), vector in zip(observations, vectors):
+                session.add(
+                    MemoryFragment(
+                        org_id=org_id,
+                        persona_id=persona_id,
+                        source_type=source_type,
+                        source_id=str(obs.id),
+                        fragment_text=text,
+                        vector=vector,
+                    )
+                )
+            await session.flush()
+
     return stored, skipped, sanitized_all
 
 

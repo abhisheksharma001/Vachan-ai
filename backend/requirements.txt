@@ -39,6 +39,9 @@ spacy>=3.7
 PyJWT[crypto]>=2.8
 httpx>=0.27
 
+# MCP server (Model Context Protocol) — exposes memory + voice KB as LLM tools.
+mcp>=1.0
+
 # Tests
 pytest>=8.2
 pytest-asyncio>=0.23

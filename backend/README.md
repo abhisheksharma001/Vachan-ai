@@ -41,6 +41,18 @@ Then: `curl 127.0.0.1:8000/health`
 > Use `127.0.0.1`, not `localhost`, if something else on your machine is already
 > bound to IPv6 `*:8000`.
 
+## Semantic memory + MCP (Phase 1/V1)
+- Captured writing and chat turns are also embedded with `intfloat/multilingual-e5-large-instruct`
+  (1024-dim) into the `memory_fragments` table for RAG-style retrieval.
+- REST endpoints under `/personas/{id}/memory`:
+  - `POST /personas/{id}/memory` — add explicit memory
+  - `POST /personas/{id}/memory/query` — semantic search
+  - `GET /personas/{id}/memory/recent` — recent fragments
+- MCP server over SSE at `/mcp/v1/sse` exposes tools:
+  - `query_persona_memory(persona_id, query, top_k)`
+  - `add_persona_memory(persona_id, text)`
+  - `get_voice_kb(persona_id)`
+
 ## Config
 Copy `../.env.example` to `../.env` and fill in. The defaults already match the
 docker-compose services, so local dev works with **no .env**. Set

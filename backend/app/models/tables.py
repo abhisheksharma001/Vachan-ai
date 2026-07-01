@@ -35,7 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.constants import STYLE_VECTOR_DIM
+from app.core import constants as C
 from app.models.base import Base
 
 # Reusable column helpers ------------------------------------------------
@@ -162,7 +162,7 @@ class StyleVector(Base):
         UUID(as_uuid=True), ForeignKey("personas.id"), nullable=False
     )
     # FD-2: 768, sourced from the verified constant — never a bare literal.
-    vector: Mapped[list[float]] = mapped_column(Vector(STYLE_VECTOR_DIM), nullable=False)
+    vector: Mapped[list[float]] = mapped_column(Vector(C.STYLE_VECTOR_DIM), nullable=False)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -187,13 +187,39 @@ class PersonaCapsule(Base):
     capsule_data: Mapped[dict] = mapped_column(JSONB, nullable=False)   # FD-7 source of truth
     yaml_rendered: Mapped[str | None] = mapped_column(Text)             # FD-7 derived view
     fingerprint_vector: Mapped[list[float]] = mapped_column(
-        Vector(STYLE_VECTOR_DIM), nullable=False  # FD-2: centroid in style space (768)
+        Vector(C.STYLE_VECTOR_DIM), nullable=False  # FD-2: centroid in style space (768)
     )
     observations_count: Mapped[int] = mapped_column(Integer, nullable=False)
     pfs_last_score: Mapped[float | None] = mapped_column(Float)
     drift_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     consent_ref: Mapped[str] = mapped_column(
         UUID(as_uuid=True), ForeignKey("consents.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = _created_at()
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MemoryFragment(Base):
+    """
+    Semantic memory store for persona RAG.
+
+    Unlike persona_observations (which only stores a hash for privacy), this
+    table intentionally keeps the sanitized retrievable text plus a semantic
+    embedding so the persona's LLM can recall facts during a conversation.
+    Rows are scoped to org/persona and subject to the same RLS policies.
+    """
+    __tablename__ = "memory_fragments"
+
+    id: Mapped[str] = _uuid_pk()
+    org_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False)
+    persona_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("personas.id"), nullable=False
+    )
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(UUID(as_uuid=True))
+    fragment_text: Mapped[str] = mapped_column(Text, nullable=False)
+    vector: Mapped[list[float]] = mapped_column(
+        Vector(C.SEMANTIC_VECTOR_DIM), nullable=False  # 1024-dim semantic embedding (e5)
     )
     created_at: Mapped[datetime] = _created_at()
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

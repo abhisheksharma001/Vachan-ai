@@ -36,6 +36,7 @@ from app.channels.contract import InboundMessage, OutboundMessage
 from app.core import constants as C
 from app.core.db import org_scoped_session
 from app.core.pii import sanitize_structured
+from app.memory import store as memory_store
 from app.models.tables import AuditLog, Consent, Persona, PersonaObservation
 
 
@@ -122,6 +123,16 @@ async def process(inbound: InboundMessage) -> OutboundMessage:
         session.add(obs)
         await session.flush()  # populate obs.id
 
+        # Also store a retrievable semantic memory fragment for the LLM.
+        await memory_store.add_fragment(
+            session,
+            org_id=inbound.tenant_id,
+            persona_id=str(persona.id),
+            source_type=C.SOURCE_TYPE_CHAT,
+            source_id=str(obs.id),
+            text=scrubbed,
+        )
+
         # Append an immutable audit record of the ingest event.
         session.add(
             AuditLog(
@@ -134,6 +145,17 @@ async def process(inbound: InboundMessage) -> OutboundMessage:
             )
         )
         observation_id = str(obs.id)
+
+        # Remember the clone's reply too, so future turns have full conversation context.
+        await memory_store.add_fragment(
+            session,
+            org_id=inbound.tenant_id,
+            persona_id=str(persona.id),
+            source_type="chat_clone",
+            source_id=None,
+            text=scrubbed,
+        )
+
         # transaction commits on clean exit of org_scoped_session
 
     return _reply(f"echo: {scrubbed}", stored=True, observation_id=observation_id)

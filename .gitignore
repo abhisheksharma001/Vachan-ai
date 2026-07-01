@@ -33,3 +33,6 @@ redisdata/
 .DS_Store
 .idea/
 .vscode/
+
+# ─── Reference clones (not part of this project) ─────────
+mem0_repo/

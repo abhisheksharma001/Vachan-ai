@@ -11,16 +11,31 @@ import styles from "./ChatBubble.module.css";
 
 type Author = "clone" | "user";
 
+export type Message = {
+  role: Author;
+  content: string;
+  timestamp?: string;
+};
+
 export function ChatBubble({
   author,
   children,
+  timestamp,
 }: {
   author: Author;
   children: React.ReactNode;
+  timestamp?: string;
 }) {
   return (
     <div className={`${styles.row} ${styles[author]}`}>
-      <div className={styles.bubble}>{children}</div>
+      <div className={styles.bubble}>
+        {children}
+        {timestamp && (
+          <time className={styles.time} dateTime={timestamp}>
+            {timestamp}
+          </time>
+        )}
+      </div>
     </div>
   );
 }

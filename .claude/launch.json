@@ -4,8 +4,16 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
-      "port": 3000
+      "runtimeArgs": ["--prefix", "/Users/abhisheksharma/Vachan.ai-redesign/frontend", "run", "dev"],
+      "port": 3005,
+      "autoPort": true
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "/Users/abhisheksharma/Vachan.ai-redesign/backend/.venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--reload", "--port", "8001", "--app-dir", "/Users/abhisheksharma/Vachan.ai-redesign/backend"],
+      "port": 8001,
+      "autoPort": true
     }
   ]
 }

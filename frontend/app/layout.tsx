@@ -10,6 +10,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import "./theme.css";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -31,7 +32,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Vachan.ai — Every agent. Your voice.",
   description:
-    "Vachan.ai Tone Engine — Phase 0 design-system shell (Sandy + Coral).",
+    "Vachan.ai learns how you talk — your warmth, pacing, and Hinglish — so every reply your AI agents send still sounds like you wrote it.",
 };
 
 export default function RootLayout({
@@ -44,7 +45,12 @@ export default function RootLayout({
       lang="en"
       className={`${fraunces.variable} ${inter.variable} ${jetbrains.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        <a href="#main" className="skipLink">
+          Skip to main content
+        </a>
+        <main id="main">{children}</main>
+      </body>
     </html>
   );
 }

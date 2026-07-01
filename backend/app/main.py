@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from app.api import auth as auth_api
 from app.api import health
+from app.api import memory as memory_api
 from app.api import messages as messages_api
 from app.api import personas as personas_api
 from app.core.auth import assert_dev_auth_allowed
@@ -31,6 +32,18 @@ def create_app() -> FastAPI:
     app.include_router(auth_api.router)
     app.include_router(messages_api.router)
     app.include_router(personas_api.router)
+    app.include_router(memory_api.router)
+
+    # MCP server over SSE (auth handled by the MCP wrapper).
+    # Mounted at /mcp/v1; the MCP app exposes /sse and /messages underneath.
+    try:
+        from app.mcp.server import mcp_with_auth
+
+        app.mount("/mcp/v1", mcp_with_auth)
+    except (RuntimeError, ImportError):
+        # mcp package not installed — skip mounting; endpoints above still work.
+        pass
+
     return app
 
 
