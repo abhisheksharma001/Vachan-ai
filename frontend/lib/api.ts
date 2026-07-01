@@ -87,6 +87,25 @@ function toMessage(raw: Record<string, unknown>): Message {
   };
 }
 
+function toFidelity(raw: Record<string, unknown> | null | undefined): Fidelity | undefined {
+  if (!raw) return undefined;
+  return {
+    pfs: Number(raw.pfs ?? 0),
+    pfsBasis: String(raw.pfs_basis ?? raw.pfsBasis ?? ""),
+    judgeScore: undefToNull(raw.judge_score ?? raw.judgeScore) as number | null,
+    judgeReason: String(raw.judge_reason ?? raw.judgeReason ?? ""),
+    cmiOutput: undefToNull(raw.cmi_output ?? raw.cmiOutput) as number | null,
+    cmiTarget: undefToNull(raw.cmi_target ?? raw.cmiTarget) as number | null,
+    hardRulePass: (raw.hard_rule_pass ?? raw.hardRulePass) as boolean | undefined,
+    hardRuleViolations: (raw.hard_rule_violations ?? raw.hardRuleViolations) as
+      | string[]
+      | undefined,
+    avCosine: undefToNull(raw.av_cosine ?? raw.avCosine) as number | null,
+    centroidDistance: undefToNull(raw.centroid_distance ?? raw.centroidDistance) as number | null,
+    pacingMatch: undefToNull(raw.pacing_match ?? raw.pacingMatch) as number | null,
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Fetch functions                                                            */
 /* -------------------------------------------------------------------------- */
@@ -201,7 +220,7 @@ export async function captureToPersona(
   });
 }
 
-export type ChatTurn = { role: Role; content: string };
+export type ChatTurn = { role: Role; content: string; isCorrection?: boolean };
 
 export type ChatWithCloneResult = {
   reply: string;
@@ -215,8 +234,9 @@ export async function chatWithClone(
   history: ChatTurn[] = [],
   channel: Channel = "chat",
   tone?: Partial<Tone>,
+  isCorrection = false,
 ): Promise<ChatWithCloneResult> {
-  return fetchJson<ChatWithCloneResult>("/api/mirror/chat", {
+  const data = await fetchJson<Record<string, unknown>>("/api/mirror/chat", {
     method: "POST",
     body: JSON.stringify({
       personaId,
@@ -229,14 +249,34 @@ export async function chatWithClone(
             hinglish: tone.hinglish,
           }
         : null,
+      isCorrection,
     }),
   });
+  return {
+    reply: String(data.reply ?? ""),
+    fidelity: toFidelity(data.fidelity as Record<string, unknown> | null | undefined),
+    modelUsed: String(data.model_used ?? data.modelUsed ?? ""),
+  };
 }
 
 export async function fetchVoiceKb(personaId: string): Promise<Record<string, unknown>> {
   return fetchJson<Record<string, unknown>>("/api/mirror/voice-kb", {
     method: "POST",
     body: JSON.stringify({ personaId }),
+  });
+}
+
+export type RedactionPreview = {
+  original: string;
+  sanitized: string;
+  found: boolean;
+  entities: Array<[string, number, number]>;
+};
+
+export async function previewRedaction(text: string): Promise<RedactionPreview> {
+  return fetchJson<RedactionPreview>("/api/personas/sanitize-preview", {
+    method: "POST",
+    body: JSON.stringify({ text }),
   });
 }
 
@@ -390,14 +430,15 @@ export function useChatWithClone(
       history?: ChatTurn[];
       channel?: Channel;
       tone?: Partial<Tone>;
+      isCorrection?: boolean;
     }
   >,
 ) {
   const qc = useQueryClient();
   return useMutation({
     ...options,
-    mutationFn: ({ personaId, message, history, channel, tone }) =>
-      chatWithClone(personaId, message, history, channel, tone),
+    mutationFn: ({ personaId, message, history, channel, tone, isCorrection }) =>
+      chatWithClone(personaId, message, history, channel, tone, isCorrection),
     onSuccess: (data, vars, ctx, mutationCtx) => {
       qc.invalidateQueries({ queryKey: keys.conversations });
       options?.onSuccess?.(data, vars, ctx, mutationCtx);

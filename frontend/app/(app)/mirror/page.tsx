@@ -9,6 +9,7 @@ import {
   FileDown,
   Loader2,
   MessageSquare,
+  Pencil,
   Send,
   Users,
 } from "lucide-react";
@@ -198,6 +199,7 @@ function MirrorChat({ personaId }: { personaId: string }) {
   });
   const [lastFidelity, setLastFidelity] = useState<Fidelity | null>(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [isCorrectionMode, setIsCorrectionMode] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -206,6 +208,7 @@ function MirrorChat({ personaId }: { personaId: string }) {
     setLastFidelity(null);
     setDraft("");
     setIsTyping(false);
+    setIsCorrectionMode(false);
   }, [personaId]);
 
   useEffect(() => {
@@ -214,6 +217,11 @@ function MirrorChat({ personaId }: { personaId: string }) {
 
   const chat = useChatWithClone({
     onSuccess: (data) => {
+      // Corrections receive an empty reply and should not add a clone turn.
+      if (!data.reply) {
+        setIsTyping(false);
+        return;
+      }
       const delay = typingDelayMs(data.reply);
       window.setTimeout(() => {
         setMessages((prev) => [
@@ -234,9 +242,12 @@ function MirrorChat({ personaId }: { personaId: string }) {
     if (!text || isTyping || chat.isPending) return;
 
     const history = messages;
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    const isCorrection = isCorrectionMode;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text, isCorrection },
+    ]);
     setDraft("");
-    setIsTyping(true);
 
     chat.mutate({
       personaId,
@@ -244,7 +255,15 @@ function MirrorChat({ personaId }: { personaId: string }) {
       history,
       channel,
       tone,
+      isCorrection,
     });
+
+    if (isCorrection) {
+      // One-shot toggle: avoid accidentally sending every follow-up as a correction.
+      setIsCorrectionMode(false);
+    } else {
+      setIsTyping(true);
+    }
   };
 
   const exportVoiceKb = () => {
@@ -318,7 +337,11 @@ function MirrorChat({ personaId }: { personaId: string }) {
                 </p>
               )}
               {messages.map((turn, idx) => (
-                <ChatBubble key={idx} author={turn.role}>
+                <ChatBubble
+                  key={idx}
+                  author={turn.role}
+                  isCorrection={turn.isCorrection}
+                >
                   {turn.content}
                 </ChatBubble>
               ))}
@@ -334,7 +357,11 @@ function MirrorChat({ personaId }: { personaId: string }) {
               <Textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Say something..."
+                placeholder={
+                  isCorrectionMode
+                    ? "Correction: this will not get a reply..."
+                    : "Say something..."
+                }
                 rows={1}
                 disabled={isTyping || chat.isPending}
                 onKeyDown={(e) => {
@@ -345,6 +372,18 @@ function MirrorChat({ personaId }: { personaId: string }) {
                 }}
                 className="min-h-10 flex-1 resize-none"
               />
+              <Button
+                type="button"
+                variant={isCorrectionMode ? "default" : "outline"}
+                aria-pressed={isCorrectionMode}
+                onClick={() => setIsCorrectionMode((v) => !v)}
+                disabled={chat.isPending}
+                className="shrink-0"
+                title="Toggle correction mode"
+              >
+                <Pencil className="size-4" />
+                <span className="hidden sm:inline">Correction</span>
+              </Button>
               <Button
                 onClick={send}
                 disabled={isTyping || chat.isPending || !draft.trim()}

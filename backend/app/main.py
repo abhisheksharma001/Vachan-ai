@@ -13,6 +13,7 @@ from app.api import conversations as conversations_api
 from app.api import health
 from app.api import messages as messages_api
 from app.api import personas as personas_api
+from app.api import voice as voice_api
 from app.core.auth import assert_dev_auth_allowed
 from app.core.config import get_settings
 
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(messages_api.router)
     app.include_router(personas_api.router)
     app.include_router(conversations_api.router)
+    app.include_router(voice_api.router)
     return app
 
 

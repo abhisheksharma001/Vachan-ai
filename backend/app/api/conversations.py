@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 from app.core.auth import AuthContext, get_current_auth
 from app.core.db import org_scoped_session
+from app.core.ids import ensure_uuid
 from app.models.tables import Conversation, Message, Persona, PersonaCapsule
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -29,6 +30,7 @@ async def create_conversation(
 ) -> dict:
     """Start a new conversation anchored to a persona's current capsule version."""
     async with org_scoped_session(auth.org_id) as session:
+        ensure_uuid(body.persona_id, detail="Persona not found.")
         persona = await session.get(Persona, body.persona_id)
         if persona is None or persona.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Persona not found.")
@@ -90,6 +92,7 @@ async def list_conversations(
                 )
                 .join(Persona, Conversation.persona_id == Persona.id)
                 .where(Conversation.user_id == auth.user_id)
+                .where(Persona.deleted_at.is_(None))
                 .order_by(Conversation.last_active_at.desc())
             )
         ).all()
@@ -116,8 +119,13 @@ async def get_messages(
 ) -> list[dict]:
     """Return all messages in a conversation, ordered by turn number."""
     async with org_scoped_session(auth.org_id) as session:
+        ensure_uuid(conversation_id, detail="Conversation not found.")
         conversation = await session.get(Conversation, conversation_id)
         if conversation is None or str(conversation.user_id) != auth.user_id:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        persona = await session.get(Persona, conversation.persona_id)
+        if persona is None or persona.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
         messages = (

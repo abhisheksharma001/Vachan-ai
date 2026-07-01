@@ -18,16 +18,55 @@ Switch RENDERER_ALIAS once that's handled.
 """
 from __future__ import annotations
 
+import logging
+import random
 import re
 
 from app.core import constants as C
-from app.core.llm import complete_with_alias
+from app.core.llm import complete_with_alias, gateway_status
 from app.tone.registers import Register, get_register
 
-RENDERER_ALIAS = C.ALIAS_GROQ  # TODO(FD-16): Sarvam primary once reasoning is stripped
+logger = logging.getLogger(__name__)
+
+RENDERER_ALIAS = C.ALIAS_KIMI  # Primary: Kimi (Moonshot); falls back to Groq if it fails
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_WORD_RE = re.compile(r"\b\w+\b")
 _MAX_ANCHORS = 8
 _MAX_HISTORY = 12
+
+_STOPWORDS = {
+    # English
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your",
+    "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her",
+    "hers", "herself", "it", "its", "itself", "they", "them", "their", "theirs",
+    "themselves", "what", "which", "who", "whom", "this", "that", "these", "those",
+    "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if",
+    "or", "because", "as", "until", "while", "of", "at", "by", "for", "with",
+    "through", "during", "before", "after", "above", "below", "up", "down", "in",
+    "out", "on", "off", "over", "under", "again", "further", "then", "once", "here",
+    "there", "when", "where", "why", "how", "all", "any", "both", "each", "few",
+    "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+    "same", "so", "than", "too", "very", "can", "will", "just", "should", "now",
+    "lets", "let", "go", "going", "like", "want", "doing", "right", "also", "apart",
+    "from", "about", "tell", "say", "something", "everything", "anything", "nothing",
+    "good", "bad", "great", "nice", "yeah", "yes", "yup", "ya", "nah", "nope", "ok",
+    "okay", "correct", "maybe", "perhaps", "sure", "fine", "well", "oh", "ah", "um",
+    "uh", "hmm",
+    # Hindi/Roman common
+    "main", "mera", "meri", "mujhe", "hum", "hamara", "tum", "tumhara", "tu", "tera",
+    "aap", "aapka", "yeh", "woh", "yeh", "vo", "hai", "hain", "tha", "thi", "the",
+    "hoon", "ho", "hoga", "hogi", "kar", "karta", "karti", "karte", "raha", "rahi",
+    "rahe", "gaya", "gayi", "gaye", "liya", "liye", "diye", "diya", "sakta", "sakti",
+    "sakte", "chahiye", "bhi", "aur", "ya", "lekin", "kyunki", "jab", "tak", "ke",
+    "ki", "ka", "ko", "se", "mein", "par", "pe", "tak", "saath", "baad", "pehle",
+    "neeche", "upar", "andar", "bahar", "phir", "dobara", "yahan", "wahan", "kaise",
+    "kyun", "kya", "kaun", "kitna", "sab", "kuch", "koi", "bahut", "zyada", "kam",
+    "theek", "acha", "achha", "bura", "haan", "nahi", "na", "han", "ji", "arey",
+    "arre", "bas", "toh", "bata", "suna", "dekho", "suno", "chalo", "karo", "sahi",
+    "mast", "badhiya", "bhai", "bro", "dude", "scene",
+    "get", "gets", "got", "getting",
+}
 
 
 def _mix_hint(cmi: float) -> str:
@@ -156,6 +195,198 @@ def _clean(text: str) -> str:
     return text
 
 
+def _extract_topics(user_message: str, history: list[dict] | None) -> list[str]:
+    """Pull content words/phrases from the current message and recent user turns.
+
+    Returns a short, ordered list of likely conversation topics (newest first).
+    Prefers multi-word phrases (e.g. "Mount Fuji") and drops weak words.
+    """
+    sources: list[tuple[str, bool]] = [((user_message or "").strip(), True)]
+    for turn in reversed((history or [])[-6:]):
+        if turn.get("role") not in ("user", "human"):
+            continue
+        sources.append(((turn.get("content") or turn.get("text") or "").strip(), False))
+
+    topics: list[str] = []
+    seen: set[str] = set()
+
+    def add(phrase: str) -> None:
+        phrase = phrase.strip("-_,.?!\"'")
+        key = " ".join(p.lower() for p in phrase.split())
+        if not key or key in seen:
+            return
+        # All words must be non-stopwords and long enough.
+        parts = key.split()
+        if any(p in _STOPWORDS or len(p) < 3 for p in parts):
+            return
+        seen.add(key)
+        topics.append(" ".join(p.capitalize() for p in parts))
+
+    for text, current in sources:
+        # 1) Capture capitalized phrases from the raw text (proper nouns).
+        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b|\b[A-Z][A-Z]+\b", text):
+            add(match.group(0))
+
+        # 2) Capture consecutive content-word phrases (1–2 words) from the lowercase text.
+        tokens = [t for t in _WORD_RE.findall(text.lower()) if len(t) >= 3 and t not in _STOPWORDS]
+        i = 0
+        while i < len(tokens):
+            # Try a 2-word phrase first; fall back to a single word.
+            if i + 1 < len(tokens):
+                bigram = f"{tokens[i]} {tokens[i + 1]}"
+                if bigram not in seen:
+                    add(bigram)
+                    i += 2
+                    continue
+            add(tokens[i])
+            i += 1
+
+    return topics[:3]
+
+
+def _topic_phrase(topics: list[str]) -> str | None:
+    """Return a clean title-cased phrase for the current topic, if any."""
+    return topics[0] if topics else None
+
+
+def _fallback_reply(
+    capsule_data: dict,
+    user_message: str,
+    register: Register,
+    history: list[dict] | None = None,
+) -> str:
+    """Context-aware deterministic reply when the LLM is unavailable.
+
+    Keeps the Mirror usable for local/open-source demos without requiring a
+    paid provider key. Real in-voice generation needs a healthy provider.
+    """
+    lang = capsule_data.get("language", {})
+    cmi = float(lang.get("cmi_target", 0.0))
+    use_hinglish = cmi > 0.05
+    text = (user_message or "").strip().lower()
+    topics = _extract_topics(user_message, history)
+
+    # Recent assistant fallback replies so we don't echo the same phrase twice.
+    recent = [
+        (turn.get("content") or turn.get("text") or "").strip()
+        for turn in (history or [])[-6:]
+        if turn.get("role") in ("assistant", "clone")
+    ]
+
+    def pick(pool: list[str]) -> str:
+        """Choose from a pool, avoiding the most recent assistant replies."""
+        fresh = [c for c in pool if c not in recent]
+        return random.choice(fresh if fresh else pool)
+
+    def h_e(english: list[str], hinglish: list[str]) -> list[str]:
+        return hinglish if use_hinglish else english
+
+    # Detect simple intents from the user's message (whole-word checks).
+    words = set(_WORD_RE.findall(text))
+    greeting_words = {"hi", "hello", "hey", "namaste", "hola", "yo", "sup", "wassup"}
+    is_greeting = bool(words & greeting_words)
+    is_how_are_you = bool(words & {"how", "kaise", "kaisa", "haal", "badhiya"}) and (
+        any(w in text for w in {"how are you", "kaise ho", "kaisa hai", "kya haal", "sab badhiya"})
+    )
+    is_whats_up = bool(words & {"what", "whats", "kya", "scene", "chal", "kar"}) and (
+        any(w in text for w in {"what's up", "whats up", "kya chal raha", "kya scene", "kya kar rahe"})
+    )
+    is_question = "?" in (user_message or "")
+    is_yes = bool(words & {"yes", "yeah", "haan", "ha", "sure", "ok", "okay", "theek"})
+    is_no = bool(words & {"no", "nahi", "na", "nope"})
+    is_frustrated = bool(words & {"hell", "wtf", "fuck", "shit", "stupid", "galt", "bakwaas", "annoying"})
+    is_bye = bool(words & {"bye", "goodbye", "ttyl"}) or "see you" in text or "chalta hoon" in text
+
+    topic = _topic_phrase(topics)
+
+    if is_frustrated:
+        return pick(
+            h_e(
+                ["Whoa, what happened? Tell me.", "Chill — what's up?", "Seems off, explain?"],
+                ["Arre chill kar, kya hua?", "Kya hogaya? Bata na.", "Sab theek? Kuch hua kya?"],
+            )
+        )
+    if is_bye:
+        return pick(
+            h_e(
+                ["Bye! Catch you later.", "Take care, talk soon."],
+                ["Bye! Baad mein baat karte hain.", "Theek hai, take care."],
+            )
+        )
+    if is_greeting:
+        return pick(
+            h_e(
+                ["Hey! How's it going?", "Hey! What's up?", "Hi! How are you doing?"],
+                ["Hey! Kaise ho?", "Haan bhai bol! Kya scene hai?", "Hi! Kya chal raha hai?"],
+            )
+        )
+    if is_how_are_you:
+        return pick(
+            h_e(
+                ["I'm doing good, you tell me.", "All good here. What's up with you?", "Pretty good. How about you?"],
+                ["Bas badhiya, tum batao.", "Sab theek, tu suna.", "Mast hai, tu kaisa hai?"],
+            )
+        )
+    if is_whats_up:
+        return pick(
+            h_e(
+                ["Not much, what's up with you?", "Same old, you say.", "Nothing special. Tell me about you."],
+                ["Kuch khaas nahi, tu bata.", "Bas waise hi, kya chal raha hai?", "Scene kuch khaas nahi, tu suna."],
+            )
+        )
+    if is_question:
+        if topic:
+            return pick(
+                h_e(
+                    [f"{topic}? Interesting — what made you think of that?", f"{topic}? Tell me more."],
+                    [f"{topic}? Achha hai — aur kya socha?", f"{topic}? Bata, kaise idea aaya?"],
+                )
+            )
+        return pick(
+            h_e(
+                ["Hmm, what do you think?", "Good question — what's your take?", "Explain a bit?"],
+                ["Achha sawaal hai, tu bata.", "Kya matlab? Thoda samjha.", "Tera opinion kya hai?"],
+            )
+        )
+    if is_yes:
+        if topic:
+            return pick(
+                h_e(
+                    [f"Cool, {topic.lower()} it is.", f"Nice, let's lock in {topic.lower()}."],
+                    [f"Theek hai, {topic.lower()} final.", f"Badhiya, {topic.lower()} karte hain."],
+                )
+            )
+        return pick(
+            h_e(
+                ["Cool, got it.", "Nice, let's do it.", "Alright."],
+                ["Haan, samajh gaya.", "Theek hai.", "Badhiya."],
+            )
+        )
+    if is_no:
+        return pick(
+            h_e(
+                ["Okay, no worries.", "Alright, noted.", "Got it, never mind."],
+                ["Theek hai, koi na.", "Achha, chhod.", "Haan, samajh gaya."],
+            )
+        )
+
+    # Statements / acknowledgements — try to echo the actual topic so it feels aware.
+    if topic:
+        return pick(
+            h_e(
+                [f"{topic}.", f"{topic} — I'm in.", f"{topic}, sounds good.", f"Go on about {topic.lower()}."],
+                [f"{topic}.", f"{topic} — sahi lag raha hai.", f"{topic}, kar lete hain.", f"{topic} ke baare mein aur bata."],
+            )
+        )
+
+    return pick(
+        h_e(
+            ["Yeah, I get that.", "Makes sense.", "Go on.", "I'm listening.", "Tell me more."],
+            ["Haan, samajh gaya.", "Sahi hai.", "Aage bata.", "Sun raha hoon.", "Batao."],
+        )
+    )
+
+
 async def render_reply(
     capsule_data: dict,
     user_message: str,
@@ -164,16 +395,31 @@ async def render_reply(
     *,
     temperature: float = 0.8,  # a little warmth/variation; the eval sweep tunes this
     max_tokens: int | None = None,
-) -> str:
-    """Generate one in-voice reply for the target CHANNEL. Clean text out."""
+) -> tuple[str, bool]:
+    """Generate one in-voice reply for the target CHANNEL. Clean text out.
+
+    Returns (reply_text, used_fallback). Falls back to a deterministic reply
+    if the LLM gateway is unconfigured OR if the configured provider fails
+    (auth/rate-limit/outage) — keeps the local demo from returning 500 when
+    keys are present but invalid/exhausted. `used_fallback=True` tells the
+    caller this text is templated filler, NOT real model output, so it
+    shouldn't be scored for persona fidelity as if it were.
+    """
     reg = register or get_register("chat")
+    if gateway_status() != "connected":
+        return _fallback_reply(capsule_data, user_message, reg, history), True
     # Spoken turns are short; email/chat can run a little longer.
     if max_tokens is None:
         max_tokens = 160 if reg.tts_safe else 400
-    resp = await complete_with_alias(
-        RENDERER_ALIAS,
-        build_messages(capsule_data, user_message, history, reg),
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return _clean(resp.choices[0].message.content or "")
+    try:
+        resp = await complete_with_alias(
+            RENDERER_ALIAS,
+            build_messages(capsule_data, user_message, history, reg),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=12,
+        )
+        return _clean(resp.choices[0].message.content or ""), False
+    except Exception as exc:
+        logger.warning("LLM render failed (%s); falling back to deterministic reply.", exc)
+        return _fallback_reply(capsule_data, user_message, reg, history), True

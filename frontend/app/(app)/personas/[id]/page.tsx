@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   Copy,
   Edit2,
+  Eye,
   FileDown,
   Loader2,
   Send,
@@ -13,6 +14,8 @@ import {
 
 import {
   type ChatTurn,
+  previewRedaction,
+  type RedactionPreview,
   useCaptureToPersona,
   useChatWithClone,
   usePersona,
@@ -167,7 +170,7 @@ export default function PersonaDetailPage() {
         </TabsList>
 
         <TabsContent value="mirror" className="space-y-4">
-          <MirrorTab personaId={id} />
+          <MirrorTab personaId={id} personaBand={persona.status} />
         </TabsContent>
 
         <TabsContent value="capture" className="space-y-4">
@@ -226,7 +229,7 @@ export default function PersonaDetailPage() {
   );
 }
 
-function MirrorTab({ personaId }: { personaId: string }) {
+function MirrorTab({ personaId, personaBand }: { personaId: string; personaBand?: string }) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [lastFidelity, setLastFidelity] = useState<Fidelity | null>(null);
@@ -310,7 +313,7 @@ function MirrorTab({ personaId }: { personaId: string }) {
       </Card>
 
       <div className="space-y-6">
-        <FidelityRing fidelity={lastFidelity} />
+        <FidelityRing fidelity={lastFidelity} band={personaBand} />
         <TonalitySliders tone={tone} onChange={setTone} />
       </div>
     </div>
@@ -319,12 +322,30 @@ function MirrorTab({ personaId }: { personaId: string }) {
 
 function CaptureTab({ personaId }: { personaId: string }) {
   const [text, setText] = useState("");
+  const [preview, setPreview] = useState<RedactionPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const capture = useCaptureToPersona();
 
   const submit = () => {
     const trimmed = text.trim();
     if (!trimmed || capture.isPending) return;
     capture.mutate({ personaId, text: trimmed });
+  };
+
+  const runPreview = async () => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const data = await previewRedaction(trimmed);
+      setPreview(data);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Preview failed");
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const style = capture.data?.style;
@@ -341,7 +362,10 @@ function CaptureTab({ personaId }: { personaId: string }) {
         <CardContent className="space-y-4">
           <Textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              if (preview) setPreview(null);
+            }}
             placeholder="Paste a paragraph or two of real writing..."
             rows={10}
             disabled={capture.isPending}
@@ -349,56 +373,111 @@ function CaptureTab({ personaId }: { personaId: string }) {
           {capture.isError && (
             <p className="text-sm text-rose-600">{capture.error.message}</p>
           )}
-          <Button
-            onClick={submit}
-            disabled={capture.isPending || text.trim().length < 20}
-          >
-            {capture.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : null}
-            Capture to persona
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={submit}
+              disabled={capture.isPending || text.trim().length < 20}
+            >
+              {capture.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : null}
+              Capture to persona
+            </Button>
+            <Button
+              variant="outline"
+              onClick={runPreview}
+              disabled={previewLoading || text.trim().length < 20}
+            >
+              {previewLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Eye className="size-4" />
+              )}
+              Preview redaction
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Capture summary</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {!capture.data ? (
-            <p className="text-sm text-ink-500">
-              Submit writing to see token and style summary.
-            </p>
-          ) : (
-            <>
-              <div className="flex justify-between text-sm">
-                <span className="text-ink-700">Band</span>
-                <span className="font-medium text-ink-900">
-                  {capture.data.band ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-ink-700">Stored</span>
-                <span className="font-medium text-ink-900">
-                  {capture.data.stored ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-ink-700">Total tokens</span>
-                <span className="font-medium text-ink-900">
-                  {capture.data.totalTokens?.toLocaleString() ?? "—"}
-                </span>
-              </div>
-              {style && Object.keys(style).length > 0 && (
-                <pre className="max-h-60 overflow-auto rounded-lg border border-sand-300 bg-sand-50 p-3 text-xs">
-                  {JSON.stringify(style, null, 2)}
-                </pre>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Capture summary</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!capture.data ? (
+              <p className="text-sm text-ink-500">
+                Submit writing to see token and style summary.
+              </p>
+            ) : (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-ink-700">Band</span>
+                  <span className="font-medium text-ink-900">
+                    {capture.data.band ?? "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-ink-700">Stored</span>
+                  <span className="font-medium text-ink-900">
+                    {capture.data.stored ?? "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-ink-700">Total tokens</span>
+                  <span className="font-medium text-ink-900">
+                    {capture.data.totalTokens?.toLocaleString() ?? "—"}
+                  </span>
+                </div>
+                {style && Object.keys(style).length > 0 && (
+                  <pre className="max-h-60 overflow-auto rounded-lg border border-sand-300 bg-sand-50 p-3 text-xs">
+                    {JSON.stringify(style, null, 2)}
+                  </pre>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Redaction preview</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!preview && !previewError && (
+              <p className="text-sm text-ink-500">
+                Click <strong>Preview redaction</strong> to see what private
+                details will be removed before storage.
+              </p>
+            )}
+            {preview &&
+              (preview.found ? (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase text-ink-500">
+                      What we keep
+                    </p>
+                    <pre className="max-h-60 overflow-auto rounded-lg border border-sand-300 bg-sand-50 p-3 text-xs whitespace-pre-wrap">
+                      {preview.sanitized}
+                    </pre>
+                  </div>
+                  <p className="text-xs text-ink-500">
+                    {preview.entities.length} private reference
+                    {preview.entities.length === 1 ? "" : "s"} removed.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-ink-700">
+                  No structured PII or private location references found — your
+                  text is stored as-is.
+                </p>
+              ))}
+            {previewError && (
+              <p className="text-sm text-rose-600">{previewError}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

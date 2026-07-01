@@ -11,7 +11,7 @@ Two styles:
 from __future__ import annotations
 
 from app.core import constants as C
-from app.core.pii import sanitize
+from app.core.pii import sanitize, sanitize_preview
 
 # The five structured Indian entities (the load-bearing, high-precision layer).
 INDIAN = [
@@ -105,4 +105,19 @@ def test_clean_text_unchanged():
 def test_empty_string():
     out = sanitize("", entities=INDIAN)
     assert out.text == ""
+    assert out.found is False
+
+
+def test_preview_redacts_possessive_location():
+    text = "kal mil, tu mere vaha aaja"
+    out = sanitize_preview(text)
+    assert out.found is True
+    assert "[IN_LOCATION]" in out.text
+    assert "mere vaha" not in out.text
+
+
+def test_preview_clean_text_unchanged():
+    text = "Namaste, kaise ho aap? Aaj market kaisa raha"
+    out = sanitize_preview(text)
+    assert out.text == text
     assert out.found is False

@@ -63,7 +63,13 @@ async def build_capsule_inmemory(sample: str) -> tuple[dict, list[float] | None]
 async def _score_turn(capsule: dict, centroid, message: str, channel: str, temperature: float) -> dict:
     reg = get_register(channel)
     cap = apply_register(capsule, reg)
-    reply = await render_reply(cap, message, register=reg, temperature=temperature)
+    reply, used_fallback = await render_reply(cap, message, register=reg, temperature=temperature)
+    if used_fallback:
+        raise RuntimeError(
+            f"render_reply fell back to the deterministic template on the "
+            f"'{channel}' channel — check the LLM gateway/API key. Scoring a "
+            "fallback reply would corrupt the PFS measurement."
+        )
     references = reference_centroids(centroid, cap, channel)
     av, dist = await best_fidelity_signals(references, reply)
     fid = await score_reply(cap, reply, channel=channel, av_cosine=av, centroid_distance=dist)

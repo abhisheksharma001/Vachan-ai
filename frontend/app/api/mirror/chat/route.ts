@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
     history?: Turn[];
     tone?: Tone;
     channel?: string;
+    isCorrection?: boolean;
   };
   try {
     body = await req.json();
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
         tone: body.tone ?? null,
         channel: body.channel ?? "chat",
         score: true,
+        is_correction: body.isCorrection ?? false,
       }),
     });
     if (!res.ok) {

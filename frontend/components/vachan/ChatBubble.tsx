@@ -6,9 +6,11 @@ type Author = "user" | "clone";
 
 export function ChatBubble({
   author,
+  isCorrection,
   children,
 }: {
   author: Author;
+  isCorrection?: boolean;
   children: React.ReactNode;
 }) {
   const isClone = author === "clone";
@@ -24,9 +26,16 @@ export function ChatBubble({
           "max-w-[85%] px-4 py-2.5 text-[15px] leading-relaxed sm:max-w-[75%]",
           isClone
             ? "rounded-2xl rounded-bl-none bg-coral-500 text-sand-50"
-            : "rounded-2xl rounded-br-none bg-sand-200 text-ink-900"
+            : isCorrection
+              ? "rounded-2xl rounded-br-none border-2 border-dashed border-amber-400 bg-amber-50 text-ink-900"
+              : "rounded-2xl rounded-br-none bg-sand-200 text-ink-900"
         )}
       >
+        {isCorrection && (
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+            Correction
+          </span>
+        )}
         {children}
       </div>
     </div>
