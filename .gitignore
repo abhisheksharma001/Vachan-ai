@@ -36,3 +36,4 @@ redisdata/
 
 # ─── Reference clones (not part of this project) ─────────
 mem0_repo/
+.tmp/
