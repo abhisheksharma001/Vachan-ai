@@ -27,6 +27,7 @@ from app.models.tables import (
     Org,
     Persona,
     PersonaCapsule,
+    PersonaKBEntry,
     PersonaObservation,
     User,
 )
@@ -38,6 +39,11 @@ from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
 from app.voice.kb import build_voice_kb
 from app.kb.extraction import extract_signature, draft_capsule_from_signature
+from app.kb import okf
+
+# Cap on how many KB entries get pulled per chat turn before rendering to the
+# compact context block (okf.render_bundle_context truncates further by chars).
+_MAX_KB_ENTRIES_PER_TURN = 50
 
 router = APIRouter(prefix="/personas", tags=["personas"])
 
@@ -156,6 +162,15 @@ class SanitizePreviewResponse(BaseModel):
     entities: list[tuple[str, int, int]] = Field(default_factory=list)
 
 
+class KBEntryRequest(BaseModel):
+    """One OKF concept (docs/OKF SPEC §4.1) — a fact, correction, or story."""
+    type: str = Field(..., min_length=1, description="e.g. 'Fact', 'Correction', 'Story'")
+    title: str | None = Field(None, description="Human-readable display name")
+    description: str | None = Field(None, description="One-line summary")
+    tags: list[str] = Field(default_factory=list)
+    body: str = Field(..., min_length=1, description="The knowledge itself, in markdown")
+
+
 async def _ensure_tenant(session: AsyncSession, auth: AuthContext) -> None:
     """JIT-provision the org + user for the verified token if they don't exist."""
     org = (
@@ -208,6 +223,22 @@ async def _load_owned_persona(
     if str(persona.user_id) != auth.user_id:
         raise HTTPException(status_code=403, detail="You can only access personas you own.")
     return persona
+
+
+async def _load_kb_entries(
+    session: AsyncSession, persona_id: str, limit: int = _MAX_KB_ENTRIES_PER_TURN
+) -> list[PersonaKBEntry]:
+    """Newest-first, non-deleted KB entries for a persona (caller already owns it)."""
+    rows = (
+        await session.execute(
+            select(PersonaKBEntry)
+            .where(PersonaKBEntry.persona_id == persona_id)
+            .where(PersonaKBEntry.deleted_at.is_(None))
+            .order_by(PersonaKBEntry.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return list(rows)
 
 
 @router.post("", status_code=201)
@@ -485,6 +516,71 @@ async def get_voice_kb(
     return build_voice_kb(capsule.capsule_data, persona_name=persona.name)
 
 
+@router.post("/{persona_id}/kb", status_code=201)
+async def create_kb_entry(
+    persona_id: str,
+    body: KBEntryRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Add one OKF knowledge concept (fact/correction/story) to a persona."""
+    async with org_scoped_session(auth.org_id) as session:
+        await _load_owned_persona(session, persona_id, auth)
+        entry = PersonaKBEntry(
+            org_id=auth.org_id,
+            persona_id=persona_id,
+            type=body.type,
+            title=body.title,
+            description=body.description,
+            tags=body.tags,
+            body=body.body,
+            source="manual",
+        )
+        session.add(entry)
+        await session.flush()
+        return okf.entry_to_dict(entry)
+
+
+@router.get("/{persona_id}/kb")
+async def list_kb_entries(
+    persona_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """List a persona's KB as an OKF bundle: an index.md plus each concept."""
+    async with org_scoped_session(auth.org_id) as session:
+        await _load_owned_persona(session, persona_id, auth)
+        entries = await _load_kb_entries(session, persona_id, limit=500)
+    return {
+        "persona_id": persona_id,
+        "index": okf.render_index(entries),
+        "entries": [okf.entry_to_dict(e) for e in entries],
+    }
+
+
+@router.delete("/{persona_id}/kb/{entry_id}")
+async def delete_kb_entry(
+    persona_id: str,
+    entry_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Soft-delete one KB entry you own."""
+    async with org_scoped_session(auth.org_id) as session:
+        await _load_owned_persona(session, persona_id, auth)
+        ensure_uuid(entry_id, detail="KB entry not found.")
+        entry = await session.get(PersonaKBEntry, entry_id)
+        if (
+            entry is None
+            or entry.deleted_at is not None
+            or str(entry.persona_id) != persona_id
+        ):
+            raise HTTPException(status_code=404, detail="KB entry not found.")
+        await session.execute(
+            update(PersonaKBEntry)
+            .where(PersonaKBEntry.id == entry_id)
+            .values(deleted_at=func.now())
+        )
+    return {"persona_id": persona_id, "entry_id": entry_id, "deleted": True}
+
+
 @router.post("/{persona_id}/chat")
 async def chat_with_clone(
     persona_id: str,
@@ -495,24 +591,38 @@ async def chat_with_clone(
     The Mirror: chat with your clone. Synchronous (interactive) — loads the
     latest capsule and replies in the persona's voice (Path A renderer).
 
-    Correction messages are accepted but do not generate a reply, so the user
-    can steer the conversation without breaking its flow. Nothing is persisted
-    here — this endpoint is stateless (the client resends `history` on each
-    turn), so a correction only affects the client's own next request.
+    Correction messages are stored as a "Correction" OKF KB entry (§4 of the
+    KB design doc) and do not generate a reply, so the user can steer the
+    persona without breaking the conversation flow. Future turns draw on it
+    via the KNOWLEDGE block injected into the system prompt below.
     """
     async with org_scoped_session(auth.org_id) as session:
         if body.is_correction:
             # Still verify the caller owns this persona before acknowledging.
             await _load_owned_persona(session, persona_id, auth)
+            entry = PersonaKBEntry(
+                org_id=auth.org_id,
+                persona_id=persona_id,
+                type="Correction",
+                title=None,
+                description=None,
+                tags=["correction"],
+                body=body.message,
+                source="chat_correction",
+            )
+            session.add(entry)
+            await session.flush()
             return {
                 "persona_id": persona_id,
                 "reply": "",
                 "correction_received": True,
+                "kb_entry_id": str(entry.id),
             }
 
         capsule_data, fingerprint, version = await _load_chat_capsule(
             session, persona_id, auth
         )
+        kb_entries = await _load_kb_entries(session, persona_id)
 
     # Apply live slider overrides to a COPY of the capsule (never mutate the
     # stored version): the same steered view drives BOTH generation and scoring.
@@ -531,11 +641,13 @@ async def chat_with_clone(
     register = get_register(body.channel)
     capsule_data = apply_register(capsule_data, register)
 
+    kb_context = okf.render_bundle_context(kb_entries)
     reply, used_fallback = await render_reply(
         capsule_data,
         body.message,
         history=[t.model_dump() for t in body.history],
         register=register,
+        kb_context=kb_context,
     )
     response = {
         "persona_id": persona_id,

@@ -98,9 +98,17 @@ def _pacing_hint(avg_words: float, burstiness: float) -> str:
     return length
 
 
-def build_system_prompt(capsule_data: dict, register: Register | None = None) -> str:
+def build_system_prompt(
+    capsule_data: dict, register: Register | None = None, kb_context: str | None = None
+) -> str:
     """Compile the capsule into a system prompt of voice + hard constraints,
-    framed for the target CHANNEL (chat / english / email / voice)."""
+    framed for the target CHANNEL (chat / english / email / voice).
+
+    `kb_context` is the persona's OKF knowledge bundle (facts/corrections/
+    stories, docs/OKF SPEC), pre-rendered by app.kb.okf.render_bundle_context.
+    It sits after the voice/anchors but before the channel directive, so the
+    directive's recency-weighted priority is preserved.
+    """
     reg = register or get_register("chat")
     lang = capsule_data.get("language", {})
     hr = capsule_data.get("hard_rules", {})
@@ -162,6 +170,15 @@ def build_system_prompt(capsule_data: dict, register: Register | None = None) ->
                 lines.append(f"  OUT: {a['out']}")
         lines.append("Move toward IN, away from OUT.")
 
+    if kb_context:
+        lines.append("")
+        lines.append(
+            "KNOWLEDGE: facts, corrections and stories this person has shared. "
+            "Use them when relevant; a Correction overrides the general voice "
+            "notes above for that specific point."
+        )
+        lines.append(kb_context)
+
     # The channel directive goes LAST so recency makes it the strongest signal —
     # it has to out-weigh the voice description and any examples above it.
     if reg.directive:
@@ -175,9 +192,12 @@ def build_messages(
     user_message: str,
     history: list[dict] | None = None,
     register: Register | None = None,
+    kb_context: str | None = None,
 ) -> list[dict]:
     """Assemble the full chat payload: system + prior turns + the new message."""
-    msgs: list[dict] = [{"role": "system", "content": build_system_prompt(capsule_data, register)}]
+    msgs: list[dict] = [
+        {"role": "system", "content": build_system_prompt(capsule_data, register, kb_context)}
+    ]
     for turn in (history or [])[-_MAX_HISTORY:]:
         role = "assistant" if turn.get("role") in ("assistant", "clone") else "user"
         content = turn.get("content") or turn.get("text") or ""
@@ -395,6 +415,7 @@ async def render_reply(
     *,
     temperature: float = 0.8,  # a little warmth/variation; the eval sweep tunes this
     max_tokens: int | None = None,
+    kb_context: str | None = None,
 ) -> tuple[str, bool]:
     """Generate one in-voice reply for the target CHANNEL. Clean text out.
 
@@ -414,7 +435,7 @@ async def render_reply(
     try:
         resp = await complete_with_alias(
             RENDERER_ALIAS,
-            build_messages(capsule_data, user_message, history, reg),
+            build_messages(capsule_data, user_message, history, reg, kb_context),
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=12,

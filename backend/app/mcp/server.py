@@ -33,7 +33,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import AsyncSessionLocal, set_org_context
-from app.models.tables import Persona, PersonaCapsule
+from app.kb import okf
+from app.models.tables import Persona, PersonaCapsule, PersonaKBEntry
 from app.tone.fidelity import score_reply
 from app.tone.registers import get_register
 from app.tone.renderer import render_reply
@@ -144,6 +145,47 @@ async def get_exemplars(org_id: str, user_id: str, persona_id: str) -> str:
     )
 
 
+async def _search_kb_entries(
+    org_id: str, persona_id: str, user_id: str, query: str, top_k: int
+) -> list[PersonaKBEntry] | None:
+    """Ownership-checked keyword search over a persona's OKF KB entries.
+
+    Not semantic search — OKF is a format, not a retrieval engine (spec §1
+    non-goals). Plain substring matching across title/description/body/tags,
+    most-recent match first; fine for the small per-persona corpora Phase 1
+    targets. Returns None for not-found/not-owned (never distinguishes which).
+    """
+    if not (_is_uuid(org_id) and _is_uuid(persona_id) and _is_uuid(user_id)):
+        return None
+    async with _scoped_session(org_id) as session:
+        persona = await session.get(Persona, persona_id)
+        if persona is None or persona.deleted_at is not None:
+            return None
+        if str(persona.user_id) != user_id:
+            return None
+        entries = (
+            await session.execute(
+                select(PersonaKBEntry)
+                .where(PersonaKBEntry.persona_id == persona_id)
+                .where(PersonaKBEntry.deleted_at.is_(None))
+                .order_by(PersonaKBEntry.created_at.desc())
+            )
+        ).scalars().all()
+
+    q = query.strip().lower()
+    if not q:
+        matches = list(entries)
+    else:
+        matches = [
+            e for e in entries
+            if q in (e.title or "").lower()
+            or q in (e.description or "").lower()
+            or q in e.body.lower()
+            or any(q in t.lower() for t in (e.tags or []))
+        ]
+    return matches[:top_k]
+
+
 @mcp.tool()
 async def vachan_search_kb(
     org_id: str,
@@ -152,16 +194,13 @@ async def vachan_search_kb(
     query: str,
     top_k: int = 3,
 ) -> str:
-    """Search the persona knowledge base. Call only when you need a fact."""
-    # KB tables (persona_kb_entries) are Phase 1 scaffolding. Until they exist,
-    # return a transparent placeholder so hosts can still test the tool schema.
-    result = await _load_owned_capsule(org_id, persona_id, user_id)
-    if result is None:
+    """Search the persona's OKF knowledge base. Call only when you need a fact."""
+    matches = await _search_kb_entries(org_id, persona_id, user_id, query, top_k)
+    if matches is None:
         return "Persona not found."
-    return (
-        f"KB search stub for '{query}' on persona {persona_id}.\n"
-        "No KB entries yet — implement app/kb/retrieval.py and wire it here."
-    )
+    if not matches:
+        return f"No KB entries match '{query}'."
+    return "\n\n---\n\n".join(okf.render_concept(e) for e in matches)
 
 
 @mcp.tool()

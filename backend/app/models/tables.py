@@ -236,6 +236,36 @@ class Message(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class PersonaKBEntry(Base):
+    """
+    One knowledge "concept" per row (OKF: docs/OKF SPEC — a typed, tagged unit
+    of knowledge with a markdown body). Facts, corrections, and stories a
+    persona owner adds so the Mirror can draw on them at chat time.
+
+    Unlike persona_observations/persona_capsules this is NOT append-only —
+    editable/deletable, matching OKF's model of knowledge as living documents
+    rather than an immutable log.
+    """
+    __tablename__ = "persona_kb_entries"
+
+    id: Mapped[str] = _uuid_pk()
+    org_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("orgs.id"), nullable=False)
+    persona_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("personas.id"), nullable=False
+    )
+    # OKF frontmatter fields (§4.1 of the spec) — `type` is the only required one.
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'"))
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # How the entry originated: 'manual' | 'chat_correction' | 'extraction'.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'manual'"))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _created_at()
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AuditLog(Base):
     """
     Immutable audit trail. NO UPDATE, NO DELETE ever (enforced in the migration).
