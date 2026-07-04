@@ -7,6 +7,7 @@ persona resource as a system message and expose the `vachan_search_kb` tool.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -44,6 +45,18 @@ class BurstRequest(BaseModel):
     text: str = Field(..., max_length=20_000)
     provider: str = Field("default")
     max_words: int = Field(25, ge=1, le=200)
+
+
+def _parse_tool_args(raw: str | None) -> dict | None:
+    """Model-generated tool arguments. Malformed JSON or a non-object payload
+    returns None so the caller skips that tool call instead of 500ing the
+    voice turn — the model misformatting its own arguments is routine, not
+    exceptional."""
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 async def _load_capsule_for_voice(session: AsyncSession, persona_id: str, user_id: str):
@@ -120,52 +133,65 @@ async def vapi_chat_completions(
     response = await complete_with_alias(C.ALIAS_KIMI, messages=messages, **kwargs)
     msg = response.choices[0].message
 
-    # If the model wants KB facts, run the tool and re-call.
+    # If the model wants KB facts, run the tool and re-call. Only the tool
+    # calls we actually EXECUTED go back into the transcript — echoing a tool
+    # call with no matching tool result is a provider error on the re-call.
+    # Foreign (caller-supplied) tools are skipped, not executed: this bridge
+    # only knows how to run vachan_search_kb.
     if msg.tool_calls:
-        tool_messages = []
+        executed: list[tuple[Any, str]] = []
         for tc in msg.tool_calls:
-            if tc.function.name == "vachan_search_kb":
-                args = json.loads(tc.function.arguments or "{}")
-                result = await vachan_search_kb(
-                    org_id=auth.org_id,
-                    persona_id=body.persona_id,
-                    user_id=auth.user_id,
-                    query=args.get("query", ""),
-                    top_k=args.get("top_k", 3),
-                )
-                tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": tc.function.name,
-                        "content": result,
-                    }
-                )
-        messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
+            if tc.function.name != "vachan_search_kb":
+                continue
+            args = _parse_tool_args(tc.function.arguments)
+            if args is None:
+                continue  # malformed model output — skip, don't 500 the turn
+            result = await vachan_search_kb(
+                org_id=auth.org_id,
+                persona_id=body.persona_id,
+                user_id=auth.user_id,
+                query=args.get("query", ""),
+                top_k=args.get("top_k", 3),
+            )
+            executed.append((tc, result))
+
+        if executed:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc, _ in executed
+                    ],
+                }
+            )
+            messages.extend(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.function.name,
+                    "content": result,
+                }
+                for tc, result in executed
+            )
+            # Re-call without tools (we want a spoken answer now, not another
+            # tool round) and with the same None-filtered sampling params —
+            # a bare temperature=None is rejected by some OpenAI-compatible hosts.
+            final_kwargs = {
+                k: v for k, v in kwargs.items() if k not in ("tools", "tool_choice")
             }
-        )
-        messages.extend(tool_messages)
-        response = await complete_with_alias(
-            C.ALIAS_KIMI,
-            messages=messages,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-        )
-        msg = response.choices[0].message
+            response = await complete_with_alias(
+                C.ALIAS_KIMI, messages=messages, **final_kwargs
+            )
+            msg = response.choices[0].message
 
     return {
         "id": getattr(response, "id", "vachan-0"),
