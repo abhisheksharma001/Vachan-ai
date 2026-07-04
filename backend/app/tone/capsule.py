@@ -372,7 +372,15 @@ async def build_capsule(
                 consent_ref=consent_id,
             )
         )
-        persona.current_capsule_version = next_version
+        # Merge gate (03 §3.7): "collapse" means this batch looks like a
+        # DIFFERENT person (alien/noisy capture). Append-only keeps the row
+        # for human review either way — but a collapsed version must never
+        # become what chat/render/MCP reads as "current". NOTE: this guard
+        # only fires once the neural fingerprint model is actually loaded;
+        # without it, drift_band() returns "unknown" for everything and this
+        # check is a silent no-op (see app/dev/smoke_fingerprint.py).
+        if capsule["drift"]["band"] != "collapse":
+            persona.current_capsule_version = next_version
 
     return {
         "version": next_version,
@@ -382,4 +390,5 @@ async def build_capsule(
         "enriched": capsule["enriched"],
         "has_fingerprint": capsule["has_fingerprint"],
         "drift": capsule["drift"],
+        "promoted": capsule["drift"]["band"] != "collapse",
     }

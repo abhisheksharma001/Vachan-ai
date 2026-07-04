@@ -82,6 +82,33 @@ async def test_query_persona_memory_tool():
         mcp_auth.reset(token_handle)
 
 
+@needs_db
+@pytest.mark.asyncio
+async def test_score_fidelity_reports_warming_up_for_fresh_persona():
+    """FD-4 honesty band, exposed on the MCP surface too (item 4): a persona
+    with no capture yet must return warming_up: true, never a bare PFS number."""
+    from app.mcp.server import score_fidelity, mcp_auth
+    from app.core.auth import issue_dev_token, verify_token
+    from app.core.db import org_scoped_session
+    from app.models.tables import Persona
+
+    org_id, user_id = str(uuid.uuid4()), str(uuid.uuid4())
+    auth = verify_token(issue_dev_token(user_id=user_id, org_id=org_id))
+
+    async with org_scoped_session(org_id) as session:
+        persona = Persona(org_id=org_id, user_id=user_id, name="FreshMCP")
+        session.add(persona)
+        await session.flush()
+        persona_id = str(persona.id)
+
+    token_handle = mcp_auth.set(auth)
+    try:
+        result = await score_fidelity(persona_id=persona_id, text="hi")
+        assert '"warming_up": true' in result
+    finally:
+        mcp_auth.reset(token_handle)
+
+
 @pytest.mark.asyncio
 async def test_mcp_auth_wrapper_rejects_missing_header():
     from app.mcp.server import mcp_with_auth

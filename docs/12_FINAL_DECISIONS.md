@@ -23,13 +23,14 @@ These are the places the council was wrong or unsafe. **These overrides are mand
 ### FD-1 — PFS must be a COMPOSITE, not single-signal cosine `[OVERRIDE]`
 **The PRD's error:** it computes PFS as the *mean cosine similarity* of one model (mStyleDistance) between the reply and the anchors (PRD §7, Sub-Component 6). That is a single noisy signal on short chat replies, and the PRD itself then admits "PFS ≠ naturalness." A single signal is exactly what the deep research said never to trust.
 
-**Final ruling:** PFS is a weighted composite of three *orthogonal* signals plus a separate Hinglish gate (per `03_TONE_ENGINE.md` §3.5):
+**Final ruling:** PFS is a weighted composite plus a separate Hinglish gate (per `03_TONE_ENGINE.md` §3.5):
 ```
 PFS = 0.5 · AV_cosine(style_embedding(reply), persona_centroid)
-    + 0.2 · (1 − centroid_distance)                      # cheap continuous monitor
+    + 0.2 · (1 − centroid_distance)                      # NOT independent — see below
     + 0.3 · (LLM_judge_score / 5)                         # rubric judge w/ in/out-brand anchors
    ── and a hard gate: CMI_conformance(reply) within ±0.05 of capsule cmi_target (08)
 ```
+- **Correction 2026-07-04:** `centroid_distance = 1 - AV_cosine` in the shipped implementation (`fingerprint.py`) — this is a TWO-signal composite (`0.7*AV_cosine + 0.3*judge`), not three orthogonal signals. The weights above are kept as-is (they still sum correctly) so `compute_pfs()`'s signature doesn't change; a genuinely independent third signal (e.g. the PAN char-n-gram cosine) is a real scoring-formula change and remains Opus-only, not yet done.
 - The single-cosine version may be kept ONLY as the cheap per-turn "centroid_distance" monitor — **not** as the headline PFS.
 - The **0.78 threshold is provisional.** It is not meaningful until calibrated against humans: pin a 100–200 example bilingual hold-out, two human raters, compute **Cohen's κ** between the judge and human mean; ship gates only at **κ > 0.6** (`03` §3.5). Until calibrated, treat 0.78 as a placeholder and report PFS as "uncalibrated."
 - Designing/altering the PFS formula is an **Opus-only** task.

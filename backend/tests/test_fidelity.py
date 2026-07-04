@@ -76,6 +76,19 @@ def test_compute_pfs_provisional_then_full():
     assert pfs3 == pytest.approx(0.87, abs=1e-4)
 
 
+def test_pfs_composite_is_effectively_two_signal():
+    """Locks in the ACTUAL formula (CTO review, item 2): fingerprint.py only
+    ever produces centroid_distance = 1 - av_cosine, so PFS collapses to
+    0.7*cosine + 0.3*judge, not three independent signals. If this ever fails,
+    someone added a real independent centroid_distance — update the module
+    docstring in fidelity.py in the same commit."""
+    av_cosine = 0.8
+    centroid_distance = 1 - av_cosine  # the only value fingerprint.py ever emits
+    pfs, basis = fidelity.compute_pfs(4.0, av_cosine=av_cosine, centroid_distance=centroid_distance)
+    assert basis == "full"
+    assert pfs == pytest.approx(0.7 * av_cosine + 0.3 * (4.0 / 5.0), abs=1e-4)
+
+
 def test_judge_messages_compile():
     msgs = fidelity.build_judge_messages(_CAPSULE, "haan bhai ho jayega")
     assert msgs[0]["role"] == "system"

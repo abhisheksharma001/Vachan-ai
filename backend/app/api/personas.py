@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import constants as C
@@ -21,6 +22,8 @@ from app.core.auth import AuthContext, get_current_auth
 from app.core.db import org_scoped_session
 from app.models.tables import (
     Consent,
+    Conversation,
+    Message,
     Org,
     Persona,
     PersonaCapsule,
@@ -115,6 +118,67 @@ async def _resolve_consent(session: AsyncSession, persona: Persona) -> str:
     if consent is None:
         raise HTTPException(status_code=403, detail="No active consent for this persona.")
     return str(consent.id)
+
+
+async def _record_turn(
+    session: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    persona_id: str,
+    capsule_version: int,
+    user_message: str,
+    reply: str,
+    pfs_score: float | None,
+) -> None:
+    """
+    Get-or-create the conversation ATOMICALLY (UNIQUE index on
+    persona_id+user_id, migration 0003) and append both turns.
+
+    Web-only Phase 0 — Conversation.channel is the TRANSPORT channel ('web'),
+    never body.channel (that's the tone REGISTER — chat/english/email/voice —
+    a different axis; conflating the two would store a register value where
+    a transport value belongs).
+
+    ON CONFLICT DO UPDATE, not select-then-insert: two concurrent chat
+    requests for the same persona+user now resolve to the SAME row instead of
+    forking into two conversations (CTO review, item 3).
+    """
+    stmt = (
+        pg_insert(Conversation)
+        .values(
+            org_id=org_id,
+            user_id=user_id,
+            persona_id=persona_id,
+            capsule_version=capsule_version,
+            channel=C.CHANNEL_WEB,
+        )
+        .on_conflict_do_update(
+            index_elements=[Conversation.persona_id, Conversation.user_id],
+            set_={"last_active_at": func.now()},
+        )
+        .returning(Conversation.id, Conversation.turn_count, Conversation.avg_pfs_score)
+    )
+    convo_id, base, avg_prior = (await session.execute(stmt)).one()
+
+    session.add(Message(
+        org_id=org_id, conversation_id=convo_id,
+        turn_number=base + 1, role="user", content=user_message,
+    ))
+    session.add(Message(
+        org_id=org_id, conversation_id=convo_id,
+        turn_number=base + 2, role="assistant", content=reply, pfs_score=pfs_score,
+    ))
+
+    new_avg = avg_prior
+    if pfs_score is not None:
+        prior_n = base // 2  # completed exchanges before this one
+        new_avg = pfs_score if avg_prior is None else (avg_prior * prior_n + pfs_score) / (prior_n + 1)
+    await session.execute(
+        update(Conversation)
+        .where(Conversation.id == convo_id)
+        .values(turn_count=Conversation.turn_count + 2, avg_pfs_score=new_avg)
+    )
 
 
 @router.post("", status_code=201)
@@ -376,4 +440,18 @@ async def chat_with_clone(
                 centroid_distance=centroid_distance,
             )
         ).as_dict()
+
+    # Persist the turn AFTER the (slow) render/score calls complete — never
+    # hold a DB transaction open across an LLM call (same rule as ingress).
+    async with org_scoped_session(auth.org_id) as session:
+        await _record_turn(
+            session,
+            org_id=auth.org_id,
+            user_id=auth.user_id,
+            persona_id=persona_id,
+            capsule_version=capsule.version,
+            user_message=body.message,
+            reply=reply,
+            pfs_score=response.get("fidelity", {}).get("pfs"),
+        )
     return response
