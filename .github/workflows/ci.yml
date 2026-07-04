@@ -1,21 +1,51 @@
 name: CI
 
-# The deterministic regression guard. Runs on every push and PR so a change
-# that breaks the persona logic (judge anchor selection, drift bands, pacing,
-# toxicity, PFS math) goes red BEFORE merge — no API keys, no Postgres, no Redis.
+# Three jobs, three regression classes this repo has actually shipped:
 #
-# Why a subset: the live tests (real LLM calls) are gated on GROQ/ANTHROPIC keys
-# and skip themselves when the keys are absent — which they are in CI, by design,
-# so we never spend tokens or leak secrets on a public runner. The DB/Redis
-# integration tests need running services; those run locally / in a later staged
-# job. What's left is the pure logic — exactly what must never silently regress.
+# 1. frontend-build — next build on LINUX. Linux is required, not a default:
+#    macOS dev machines use APFS, which is case-INsensitive, so an import of
+#    "@/components/ui/Button" happily resolves to button.tsx locally and only
+#    explodes on a case-sensitive filesystem. Same for dead import paths after
+#    file deletions — `next build` type-checks every file in the program.
+#
+# 2. backend-guard — the fast deterministic guard (no keys, no services).
+#    Live-LLM tests are gated on GROQ/ANTHROPIC keys and skip themselves when
+#    the keys are absent — which they are in CI, by design, so we never spend
+#    tokens or leak secrets on a public runner.
+#
+# 3. backend-integration — full pytest against real Postgres (pgvector) +
+#    Redis services matching docker-compose defaults (5432/6379), plus the
+#    migration-graph check: `alembic heads` must return exactly ONE head
+#    (a fork here silently breaks `alembic upgrade head` for every fresh
+#    clone), then a real `alembic upgrade head` against the service DB.
 
 on:
   push:
-    branches: ["main", "phase2-hardening"]
+    branches: ["main"]
   pull_request:
 
 jobs:
+  frontend-build:
+    name: frontend build (Linux, case-sensitive FS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (type-checks all files; catches casing + dead imports)
+        run: npx next build
+
   backend-guard:
     name: backend deterministic guard
     runs-on: ubuntu-latest
@@ -54,3 +84,69 @@ jobs:
             --ignore=tests/test_renderer.py \
             --ignore=tests/test_voice_kb.py \
             --ignore=tests/test_rls.py
+
+  backend-integration:
+    name: backend integration (Postgres + Redis + migrations)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        # pgvector image, same as docker-compose — plain postgres lacks the
+        # `vector` type the fingerprint columns need.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vachan
+          POSTGRES_PASSWORD: vachan
+          POSTGRES_DB: vachan
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vachan -d vachan"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # Two roles by design: migrations run as owner (SYNC), the app/tests run
+      # as vachan_app (created by migration 0001) so RLS actually applies.
+      DATABASE_URL: postgresql+psycopg://vachan_app:vachan_app@localhost:5432/vachan
+      DATABASE_URL_SYNC: postgresql+psycopg://vachan:vachan@localhost:5432/vachan
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Migration graph must have exactly one head
+        run: |
+          heads=$(alembic heads | wc -l)
+          echo "alembic heads -> $heads"
+          test "$heads" -eq 1
+
+      - name: Apply migrations to the service database
+        run: alembic upgrade head
+
+      - name: Full test suite (services up, keys absent → live tests skip)
+        run: pytest tests/ -q

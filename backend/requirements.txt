@@ -17,7 +17,7 @@ alembic>=1.13
 pgvector>=0.3.0
 
 # Session cache
-redis>=5.0
+redis>=5.0,<9  # v8 changed BRPOP timeout semantics (see channels/queue.py); bound majors
 
 # LLM gateway (FD-5: aliases mapped to real IDs in litellm_config.yaml)
 litellm>=1.40

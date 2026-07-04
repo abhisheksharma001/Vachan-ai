@@ -22,6 +22,8 @@ subset of global order, so this is correct now; Phase 1 shards by
 """
 from __future__ import annotations
 
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from app.channels.contract import InboundMessage, OutboundMessage
 from app.core.redis_client import redis_client
 
@@ -60,7 +62,12 @@ async def dequeue(timeout: int = 5) -> InboundMessage | None:
     Block up to `timeout` seconds for the next message; None if the queue
     stayed empty. The worker calls this in a loop.
     """
-    item = await redis_client.brpop(_QUEUE_KEY, timeout=timeout)
+    try:
+        item = await redis_client.brpop(_QUEUE_KEY, timeout=timeout)
+    except RedisTimeoutError:
+        # redis-py ≥8 raises on an empty-queue BRPOP timeout where ≤7 returned
+        # None. Either way the contract here is: empty queue → None.
+        return None
     if item is None:
         return None
     _key, blob = item  # BRPOP returns (list_name, value)
