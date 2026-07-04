@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from app.core.auth import issue_dev_token
 from app.core.db import org_scoped_session
-from app.models.tables import Conversation
+from app.models.tables import Conversation, Message
 from app.tone import capsule as capsule_mod
 
 _PASTE = (
@@ -59,6 +59,18 @@ async def test_chat_writes_conversation_and_message_rows(monkeypatch):
             select(Conversation).where(Conversation.persona_id == pid)
         )).scalar_one()
         assert convo.turn_count == 2  # user turn + assistant turn persisted
+
+        # turn_count alone can lie — assert the actual Message rows landed.
+        messages = (await session.execute(
+            select(Message)
+            .where(Message.conversation_id == convo.id)
+            .order_by(Message.turn_number)
+        )).scalars().all()
+        assert [(m.turn_number, m.role) for m in messages] == [
+            (1, "user"), (2, "assistant"),
+        ]
+        assert messages[0].content == "kaisa hai sab"
+        assert messages[1].content  # assistant reply persisted non-empty
 
 
 async def test_chat_reuses_most_recent_conversation_across_turns(monkeypatch):

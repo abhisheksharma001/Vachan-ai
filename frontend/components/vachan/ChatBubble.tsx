@@ -45,7 +45,23 @@ export function ChatBubble({
           </span>
         )}
         {children}
+        {timestamp && (
+          <time
+            dateTime={timestamp}
+            className="mt-1 block text-[11px] opacity-60"
+          >
+            {formatBubbleTime(timestamp)}
+          </time>
+        )}
       </div>
     </div>
   );
+}
+
+/** Human-readable time for the bubble label; falls back to the raw string
+ * when the value isn't a parseable date (e.g. already-formatted "2:14 PM"). */
+function formatBubbleTime(timestamp: string): string {
+  const d = new Date(timestamp);
+  if (Number.isNaN(d.getTime())) return timestamp;
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }

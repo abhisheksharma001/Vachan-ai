@@ -24,6 +24,10 @@ on:
     branches: ["main"]
   pull_request:
 
+# Least-privilege token: nothing here writes to the repo.
+permissions:
+  contents: read
+
 jobs:
   frontend-build:
     name: frontend build (Linux, case-sensitive FS)
@@ -33,6 +37,10 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in git config while third-party
+          # npm/pip packages run later in the job.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -60,6 +68,10 @@ jobs:
       TRANSFORMERS_OFFLINE: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in git config while third-party
+          # npm/pip packages run later in the job.
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -128,6 +140,10 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in git config while third-party
+          # npm/pip packages run later in the job.
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:

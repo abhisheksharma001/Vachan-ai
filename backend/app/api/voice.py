@@ -66,15 +66,18 @@ async def _load_capsule_for_voice(session: AsyncSession, persona_id: str, user_i
         raise HTTPException(status_code=404, detail="Persona not found.")
     if str(persona.user_id) != user_id:
         raise HTTPException(status_code=403, detail="Persona not owned by caller.")
-    capsule = (
-        await session.execute(
-            select(PersonaCapsule)
-            .where(PersonaCapsule.persona_id == persona_id)
-            .where(PersonaCapsule.deleted_at.is_(None))
-            .order_by(PersonaCapsule.version.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    # ACTIVE capsule = promoted current_capsule_version when set (collapse-band
+    # capsules are stored but never promoted); latest only pre-first-promotion.
+    stmt = (
+        select(PersonaCapsule)
+        .where(PersonaCapsule.persona_id == persona_id)
+        .where(PersonaCapsule.deleted_at.is_(None))
+    )
+    if persona.current_capsule_version is not None:
+        stmt = stmt.where(PersonaCapsule.version == persona.current_capsule_version)
+    else:
+        stmt = stmt.order_by(PersonaCapsule.version.desc())
+    capsule = (await session.execute(stmt.limit(1))).scalar_one_or_none()
     if capsule is None:
         raise HTTPException(
             status_code=409,
@@ -90,7 +93,7 @@ async def vapi_chat_completions(
 ) -> dict:
     """Non-streaming custom LLM endpoint for Vapi with persona pre-load + KB tool."""
     async with org_scoped_session(auth.org_id) as session:
-        persona, capsule = await _load_capsule_for_voice(
+        _persona, capsule = await _load_capsule_for_voice(
             session, body.persona_id, auth.user_id
         )
 

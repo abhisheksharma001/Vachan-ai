@@ -11,6 +11,8 @@ modelling needs a DPDP consent, so creating a persona records one.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
@@ -235,6 +237,11 @@ async def _record_turn(
     channel is the TRANSPORT channel ('web'), never body.channel (that's the
     tone REGISTER — chat/english/email/voice — a different axis).
     """
+    # Row-lock the conversation so two concurrent chats can't both read the
+    # same turn_count and write duplicate turn_numbers. Deliberately NOT
+    # filtered by capsule_version: a conversation anchors the version it
+    # STARTED on (see create_conversation); re-capturing mid-thread must not
+    # silently fork the Mirror's running session into a new conversation.
     convo = (
         await session.execute(
             select(Conversation)
@@ -242,6 +249,7 @@ async def _record_turn(
             .where(Conversation.user_id == user_id)
             .order_by(Conversation.last_active_at.desc())
             .limit(1)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if convo is None:
@@ -261,11 +269,23 @@ async def _record_turn(
     convo.turn_count = base + 2
     convo.last_active_at = func.now()
     if pfs_score is not None:
-        prior_n = base // 2
-        convo.avg_pfs_score = (
-            pfs_score if convo.avg_pfs_score is None
-            else (convo.avg_pfs_score * prior_n + pfs_score) / (prior_n + 1)
-        )
+        if convo.avg_pfs_score is None:
+            convo.avg_pfs_score = pfs_score
+        else:
+            # Weight by turns that actually CARRIED a score — unscored turns
+            # (score=false, fallback replies) must not dilute the average.
+            scored_n = (
+                await session.scalar(
+                    select(func.count(Message.id))
+                    .where(Message.conversation_id == convo.id)
+                    .where(Message.role == "assistant")
+                    .where(Message.pfs_score.is_not(None))
+                )
+                or 0
+            )
+            convo.avg_pfs_score = (
+                convo.avg_pfs_score * scored_n + pfs_score
+            ) / (scored_n + 1)
 
 
 @router.post("", status_code=201)

@@ -39,6 +39,8 @@ Tools (SSE, pre-existing):
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
@@ -75,10 +77,32 @@ def _get_auth() -> AuthContext:
     return mcp_auth.get()
 
 
+def _active_capsule_stmt(persona: Persona):
+    """Statement for the persona's ACTIVE capsule — the promoted
+    current_capsule_version when set (collapse-band capsules are stored but
+    never promoted), falling back to the latest version only when no
+    promotion pointer exists yet. Mirrors app.api.personas._load_chat_capsule
+    so MCP voice-KB/render/score never pick up an unpromoted capsule."""
+    stmt = (
+        select(PersonaCapsule)
+        .where(PersonaCapsule.persona_id == str(persona.id))
+        .where(PersonaCapsule.deleted_at.is_(None))
+    )
+    if persona.current_capsule_version is not None:
+        stmt = stmt.where(PersonaCapsule.version == persona.current_capsule_version)
+    else:
+        stmt = stmt.order_by(PersonaCapsule.version.desc())
+    return stmt.limit(1)
+
+
 async def _owned_persona(persona_id: str, auth: AuthContext) -> Persona | None:
     """SSE-path ownership check: persona must be in the caller's org AND
     owned by the caller's verified user_id — org membership alone is not
     enough (the same gap the stdio path closes via `_load_owned_capsule`)."""
+    if not _is_uuid(persona_id):
+        # Network input: a malformed id must be a clean "not found", not a
+        # DataError-turned-500 from the UUID column lookup.
+        return None
     async with org_scoped_session(auth.org_id) as session:
         persona = (
             await session.execute(select(Persona).where(Persona.id == persona_id))
@@ -143,13 +167,7 @@ async def get_voice_kb(persona_id: str) -> str:
         return json.dumps({"error": "Persona not found."})
     async with org_scoped_session(auth.org_id) as session:
         capsule = (
-            await session.execute(
-                select(PersonaCapsule)
-                .where(PersonaCapsule.persona_id == persona_id)
-                .where(PersonaCapsule.deleted_at.is_(None))
-                .order_by(PersonaCapsule.version.desc())
-                .limit(1)
-            )
+            await session.execute(_active_capsule_stmt(persona))
         ).scalar_one_or_none()
     if capsule is None:
         return json.dumps({"error": "No capsule yet — capture some writing first."})
@@ -245,11 +263,19 @@ def _capsule_to_markdown(persona_name: str, capsule_data: dict) -> str:
     return "\n".join(lines)
 
 
-async def _scoped_session(org_id: str) -> AsyncSession:
-    """Open a transaction pinned to one org for RLS."""
+@asynccontextmanager
+async def _scoped_session(org_id: str) -> AsyncIterator[AsyncSession]:
+    """Open a transaction pinned to one org for RLS.
+
+    Must be an async CONTEXT MANAGER (not a plain coroutine): callers use
+    `async with _scoped_session(...)`, and the session must always be closed.
+    """
     session = AsyncSessionLocal()
-    await set_org_context(session, org_id)
-    return session
+    try:
+        await set_org_context(session, org_id)
+        yield session
+    finally:
+        await session.close()
 
 
 async def _load_owned_capsule(
@@ -269,13 +295,7 @@ async def _load_owned_capsule(
         if str(persona.user_id) != user_id:
             return None
         capsule = (
-            await session.execute(
-                select(PersonaCapsule)
-                .where(PersonaCapsule.persona_id == persona_id)
-                .where(PersonaCapsule.deleted_at.is_(None))
-                .order_by(PersonaCapsule.version.desc())
-                .limit(1)
-            )
+            await session.execute(_active_capsule_stmt(persona))
         ).scalar_one_or_none()
         if capsule is None:
             return None

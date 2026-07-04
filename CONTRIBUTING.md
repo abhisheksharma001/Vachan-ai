@@ -7,7 +7,7 @@ Thanks for helping make Vachan.ai better. This guide covers how to set up the pr
 1. **Clone the repository**
    ```bash
    git clone https://github.com/abhisheksharma001/Vachan-ai.git
-   cd Vachan.ai
+   cd Vachan-ai
    ```
 
 2. **Start backing services**
