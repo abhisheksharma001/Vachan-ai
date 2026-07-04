@@ -13,6 +13,7 @@ exemplars — doc 03 §3.3 — and live in capsule_data, never as loose raw text
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -25,6 +26,8 @@ from app.memory import store as memory_store
 from app.models.tables import MemoryFragment, Persona, PersonaObservation
 from app.tone import capture
 from app.tone.features import aggregate_features, message_features
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -97,12 +100,18 @@ async def ingest_messages(
     # over these rows in the same transaction would not see them yet.
     await session.flush()
 
-    # Batch-embed and store retrievable semantic memory fragments.
+    # Batch-embed and store retrievable semantic memory fragments. The memory
+    # layer is secondary: an embedding failure must never roll back the
+    # already-flushed persona observations above.
     if observations:
         texts = [text for _, text in observations]
-        vectors = await memory_store.embedder.encode_fragments_async(texts)
+        try:
+            vectors = await memory_store.embedder.encode_fragments_async(texts)
+        except Exception:  # noqa: BLE001
+            logger.exception("semantic memory embedding failed; observations still stored")
+            vectors = None
         if vectors:
-            for (obs, text), vector in zip(observations, vectors):
+            for (obs, text), vector in zip(observations, vectors, strict=True):
                 session.add(
                     MemoryFragment(
                         org_id=org_id,

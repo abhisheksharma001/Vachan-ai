@@ -146,19 +146,22 @@ async def process(inbound: InboundMessage) -> OutboundMessage:
         )
         observation_id = str(obs.id)
 
-        # Remember the clone's reply too, so future turns have full conversation context.
+        reply_text = f"echo: {scrubbed}"
+
+        # Remember the clone's REPLY (not a duplicate of the user's message),
+        # so future turns have full conversation context.
         await memory_store.add_fragment(
             session,
             org_id=inbound.tenant_id,
             persona_id=str(persona.id),
             source_type="chat_clone",
             source_id=None,
-            text=scrubbed,
+            text=reply_text,
         )
 
         # transaction commits on clean exit of org_scoped_session
 
-    return _reply(f"echo: {scrubbed}", stored=True, observation_id=observation_id)
+    return _reply(reply_text, stored=True, observation_id=observation_id)
 
 
 async def process_one(timeout: int = 5) -> OutboundMessage | None:

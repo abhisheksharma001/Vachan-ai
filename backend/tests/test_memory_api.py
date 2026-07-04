@@ -144,7 +144,11 @@ async def test_query_memory_returns_empty_when_embedder_missing(
     memory_client, auth_headers, persona_id, monkeypatch
 ):
     monkeypatch.setattr("app.memory.embedder.available", lambda: False)
-    monkeypatch.setattr("app.memory.retriever.embedder.encode_query_async", lambda _: None)
+
+    async def _no_embedder(_):
+        return None
+
+    monkeypatch.setattr("app.memory.retriever.embedder.encode_query_async", _no_embedder)
 
     r = await memory_client.post(
         f"/personas/{persona_id}/memory/query",

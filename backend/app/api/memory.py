@@ -8,7 +8,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -42,7 +42,10 @@ async def _load_persona(persona_id: str, auth: AuthContext):
         persona = (
             await session.execute(select(Persona).where(Persona.id == persona_id))
         ).scalar_one_or_none()
-    if persona is None:
+    if persona is None or persona.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Persona not found.")
+    # Org scope (RLS) is not ownership — memory is per-user private data.
+    if str(persona.user_id) != auth.user_id:
         raise HTTPException(status_code=404, detail="Persona not found.")
     return persona
 
@@ -99,7 +102,7 @@ async def query_memory(
 @router.get("/recent")
 async def recent_memory(
     persona_id: str,
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     auth: AuthContext = Depends(get_current_auth),
 ) -> dict:
     """Return the most recent memory fragments for the persona."""

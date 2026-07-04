@@ -6,7 +6,11 @@ safety guard that refuses to boot with the dev auth issuer in production.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 
 from app.api import auth as auth_api
 from app.api import conversations as conversations_api
@@ -44,9 +48,10 @@ def create_app() -> FastAPI:
         from app.mcp.server import mcp_with_auth
 
         app.mount("/mcp/v1", mcp_with_auth)
-    except (RuntimeError, ImportError):
-        # mcp package not installed — skip mounting; endpoints above still work.
-        pass
+    except (RuntimeError, ImportError) as exc:
+        # mcp package not installed / incompatible — skip mounting; endpoints
+        # above still work. Log it so a silently missing /mcp/v1 is diagnosable.
+        logger.warning("MCP server not mounted: %s", exc)
 
     return app
 
