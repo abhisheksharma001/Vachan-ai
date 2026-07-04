@@ -16,7 +16,7 @@ services:
       POSTGRES_PASSWORD: vachan
       POSTGRES_DB: vachan
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5433}:5432"
     # Named volume (not a bind mount): `docker compose down -v` truly wipes it,
     # so the DB really resets from scratch when you want a clean slate.
     volumes:
@@ -30,7 +30,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redisdata:/data
     healthcheck:

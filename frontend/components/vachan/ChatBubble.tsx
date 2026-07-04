@@ -1,15 +1,8 @@
-/*
- * ChatBubble (doc 06 §6.5 #3) — the signature element of The Mirror.
- *
- *   author="clone" → coral bubble, left-aligned  (this IS "the voice")
- *   author="user"  → sand bubble, right-aligned
- *
- * TypingBubble renders the three-dot "the clone is thinking" indicator, which
- * mimics the human-pacing delay from doc 01 §1.6.
- */
-import styles from "./ChatBubble.module.css";
+"use client";
 
-type Author = "clone" | "user";
+import { cn } from "@/lib/utils";
+
+type Author = "user" | "clone";
 
 export type Message = {
   role: Author;
@@ -19,40 +12,39 @@ export type Message = {
 
 export function ChatBubble({
   author,
+  isCorrection,
   children,
   timestamp,
 }: {
   author: Author;
+  isCorrection?: boolean;
   children: React.ReactNode;
   timestamp?: string;
 }) {
+  const isClone = author === "clone";
   return (
-    <div className={`${styles.row} ${styles[author]}`}>
-      <div className={styles.bubble}>
-        {children}
-        {timestamp && (
-          <time className={styles.time} dateTime={timestamp}>
-            {timestamp}
-          </time>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export function TypingBubble() {
-  return (
-    <div className={`${styles.row} ${styles.clone}`}>
+    <div
+      className={cn(
+        "flex w-full",
+        isClone ? "justify-start" : "justify-end"
+      )}
+    >
       <div
-        className={styles.bubble}
-        role="status"
-        aria-label="The clone is typing"
+        className={cn(
+          "max-w-[85%] px-4 py-2.5 text-[15px] leading-relaxed sm:max-w-[75%]",
+          isClone
+            ? "rounded-2xl rounded-bl-none bg-coral-500 text-sand-50"
+            : isCorrection
+              ? "rounded-2xl rounded-br-none border-2 border-dashed border-amber-400 bg-amber-50 text-ink-900"
+              : "rounded-2xl rounded-br-none bg-sand-200 text-ink-900"
+        )}
       >
-        <span className={styles.dots}>
-          <span className={styles.dot} />
-          <span className={styles.dot} />
-          <span className={styles.dot} />
-        </span>
+        {isCorrection && (
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+            Correction
+          </span>
+        )}
+        {children}
       </div>
     </div>
   );

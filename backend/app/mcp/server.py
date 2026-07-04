@@ -1,23 +1,57 @@
 """
-MCP server — exposes persona memory and voice KB as tools for LLM platforms.
+Vachan MCP server — expose persona memory, resources, and voice/fidelity
+tools to external agents over TWO transports with two different trust models:
 
-Run over SSE at /mcp/v1/sse. The initial HTTP request must carry the same
-Authorization header used by the REST API; middleware validates it and pins the
-org context for every tool call in that session.
+  • STDIO (local, e.g. Claude Desktop) — resources + `vachan_*` tools below
+    take explicit `org_id`/`user_id`/`persona_id` args and check ownership via
+    `_load_owned_capsule`. Safe because stdio is spawned locally; there is no
+    network caller to spoof.
+        ./.venv/bin/python -m app.mcp.server
+
+  • SSE (network, e.g. Vapi/remote agents) — `query_persona_memory`,
+    `add_persona_memory`, `get_voice_kb` below use `mcp_auth`/`_get_auth()`,
+    populated by `mcp_with_auth` from a VERIFIED Bearer JWT on the SSE
+    handshake. This is the "transport itself verifies the caller" precondition
+    the design doc calls for before anything is mounted on a network
+    transport (doc 14 §11) — org_id/user_id come from the token, never from a
+    caller-supplied argument, so a network caller cannot claim someone else's
+    identity the way a stdio-style tool signature would allow if exposed here.
+
+    Mounted at /mcp/v1 in main.py; the MCP SSE app exposes /sse + /messages.
+
+SECURITY: org_id alone only proves RLS tenant scope, not that the caller owns
+the persona. Every persona-scoped call below (both transports) checks
+`persona.user_id` against the caller's own user_id — never just org
+membership.
+
+Resources (stdio):
+  • persona://{org_id}/{user_id}/{persona_id}              -> full persona capsule markdown
+  • persona://{org_id}/{user_id}/{persona_id}/exemplars    -> top style exemplars
+
+Tools (stdio):
+  • vachan_search_kb            -> semantic KB search (stub — Phase 1 KB tables)
+  • vachan_render_in_persona    -> rewrite a draft in voice (FD-8 render_in_persona)
+  • vachan_score_fidelity       -> score a candidate reply (FD-8 score_fidelity)
+
+Tools (SSE, pre-existing):
+  • query_persona_memory / add_persona_memory / get_voice_kb
 """
 from __future__ import annotations
 
 import json
 from contextvars import ContextVar
+from typing import Any
+from uuid import UUID
 
+import yaml
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, verify_token
-from app.core.db import org_scoped_session
+from app.core.db import AsyncSessionLocal, org_scoped_session, set_org_context
 from app.memory import embedder, retriever, store
 from app.models.tables import Persona, PersonaCapsule
 from app.tone.fidelity import score_reply
-from app.tone.fingerprint import best_fidelity_signals, reference_centroids
 from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
 from app.voice.kb import build_voice_kb
@@ -30,23 +64,30 @@ except Exception as exc:  # pragma: no cover - dependency optional at import tim
         "mcp package is not installed. Add 'mcp>=1.0' to requirements.txt and reinstall."
     ) from exc
 
-
-# Per-SSE-session auth context. Set by the auth middleware before tool calls.
-mcp_auth: ContextVar[AuthContext] = ContextVar("mcp_auth")
-
 mcp = FastMCP("vachan")
+
+# Per-SSE-session auth context. Set by mcp_with_auth before SSE tool calls;
+# never used by the stdio tools below (they take org_id/user_id explicitly).
+mcp_auth: ContextVar[AuthContext] = ContextVar("mcp_auth")
 
 
 def _get_auth() -> AuthContext:
     return mcp_auth.get()
 
 
-async def _persona_exists(persona_id: str, auth: AuthContext) -> bool:
+async def _owned_persona(persona_id: str, auth: AuthContext) -> Persona | None:
+    """SSE-path ownership check: persona must be in the caller's org AND
+    owned by the caller's verified user_id — org membership alone is not
+    enough (the same gap the stdio path closes via `_load_owned_capsule`)."""
     async with org_scoped_session(auth.org_id) as session:
         persona = (
             await session.execute(select(Persona).where(Persona.id == persona_id))
         ).scalar_one_or_none()
-    return persona is not None
+    if persona is None or persona.deleted_at is not None:
+        return None
+    if str(persona.user_id) != auth.user_id:
+        return None
+    return persona
 
 
 @mcp.tool()
@@ -60,7 +101,7 @@ async def query_persona_memory(
     Returns a JSON list of the most relevant memory fragments.
     """
     auth = _get_auth()
-    if not await _persona_exists(persona_id, auth):
+    if await _owned_persona(persona_id, auth) is None:
         return json.dumps({"error": "Persona not found."})
     async with org_scoped_session(auth.org_id) as session:
         results = await retriever.search(session, persona_id, query, top_k=top_k)
@@ -77,7 +118,7 @@ async def query_persona_memory(
 async def add_persona_memory(persona_id: str, text: str) -> str:
     """Store an explicit memory snippet for a persona."""
     auth = _get_auth()
-    if not await _persona_exists(persona_id, auth):
+    if await _owned_persona(persona_id, auth) is None:
         return json.dumps({"error": "Persona not found."})
     async with org_scoped_session(auth.org_id) as session:
         fragment = await store.add_fragment(
@@ -97,16 +138,15 @@ async def add_persona_memory(persona_id: str, text: str) -> str:
 async def get_voice_kb(persona_id: str) -> str:
     """Return the compiled voice knowledge base for a persona (system prompt + guidelines)."""
     auth = _get_auth()
+    persona = await _owned_persona(persona_id, auth)
+    if persona is None:
+        return json.dumps({"error": "Persona not found."})
     async with org_scoped_session(auth.org_id) as session:
-        persona = (
-            await session.execute(select(Persona).where(Persona.id == persona_id))
-        ).scalar_one_or_none()
-        if persona is None:
-            return json.dumps({"error": "Persona not found."})
         capsule = (
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
@@ -114,92 +154,6 @@ async def get_voice_kb(persona_id: str) -> str:
     if capsule is None:
         return json.dumps({"error": "No capsule yet — capture some writing first."})
     return json.dumps(build_voice_kb(capsule.capsule_data, persona_name=persona.name))
-
-
-async def _latest_capsule(persona_id: str, auth: AuthContext) -> tuple[Persona | None, PersonaCapsule | None]:
-    async with org_scoped_session(auth.org_id) as session:
-        persona = (
-            await session.execute(select(Persona).where(Persona.id == persona_id))
-        ).scalar_one_or_none()
-        if persona is None:
-            return None, None
-        capsule = (
-            await session.execute(
-                select(PersonaCapsule)
-                .where(PersonaCapsule.persona_id == persona_id)
-                .order_by(PersonaCapsule.version.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        return persona, capsule
-
-
-@mcp.tool()
-async def render_in_persona(persona_id: str, content: str, channel: str = "chat") -> str:
-    """
-    Render `content` in a persona's voice for the given register (chat/
-    english/email/voice). FD-8's render_in_persona MCP surface — mounts
-    Vachan's voice as a final-stage tool on any MCP-capable agent.
-
-    # TODO FD-11: this re-fetches the capsule from Postgres on every call.
-    # Fine for text/web chat; a DB round-trip per turn will blow the <800ms
-    # voice latency budget before the LLM call even starts. Wire the Redis
-    # hot-capsule cache FD-11 specifies before mounting this on a voice agent
-    # (Vapi/Retell) — do not forget this when voice gets wired.
-    """
-    auth = _get_auth()
-    persona, capsule = await _latest_capsule(persona_id, auth)
-    if persona is None:
-        return json.dumps({"error": "Persona not found."})
-    if capsule is None:
-        return json.dumps({"error": "No capsule yet — capture some writing first."})
-    register = get_register(channel)
-    capsule_data = apply_register(capsule.capsule_data, register)
-    rendered = await render_reply(capsule_data, content, register=register)
-    return json.dumps({
-        "rendered_text": rendered,
-        "register_applied": register.name,
-        "capsule_version_used": capsule.version,
-    })
-
-
-@mcp.tool()
-async def score_fidelity(persona_id: str, text: str, channel: str = "chat") -> str:
-    """
-    Score `text` against a persona's fidelity (PFS). Returns `warming_up: true`
-    instead of a bare number when the capsule has under 700 words of evidence
-    (FD-4) — never present a thin clone's score as trustworthy.
-
-    # TODO FD-11: same re-fetch-per-call cost as render_in_persona above —
-    # wire the Redis hot-capsule cache before this is called at conversational
-    # (voice) latency.
-    """
-    auth = _get_auth()
-    persona, capsule = await _latest_capsule(persona_id, auth)
-    if persona is None:
-        return json.dumps({"error": "Persona not found."})
-    if persona.status == "warming_up":
-        return json.dumps({"warming_up": True, "confidence_band": "warming_up"})
-    if capsule is None:
-        return json.dumps({"error": "No capsule yet — capture some writing first."})
-    register = get_register(channel)
-    capsule_data = apply_register(capsule.capsule_data, register)
-    references = reference_centroids(capsule.fingerprint_vector, capsule_data, register.name)
-    av_cosine, centroid_distance = await best_fidelity_signals(references, text)
-    result = await score_reply(
-        capsule_data, text, channel=register.name,
-        av_cosine=av_cosine, centroid_distance=centroid_distance,
-    )
-    return json.dumps({
-        "pfs_score": result.pfs,
-        "pfs_basis": result.pfs_basis,
-        "confidence_band": capsule.capsule_data.get("band"),
-        "signals": {
-            "av_cosine": result.av_cosine,
-            "judge_score": result.judge_score,
-            "hard_rule_pass": result.hard_rule_pass,
-        },
-    })
 
 
 # The raw MCP SSE ASGI app. Auth middleware wraps this in main.py.
@@ -210,7 +164,10 @@ async def mcp_with_auth(scope, receive, send) -> None:
     """
     ASGI wrapper that validates the Authorization header on the SSE handshake,
     pins the auth context, then delegates to the MCP SSE app. Any invalid or
-    missing token is rejected before the SSE stream starts.
+    missing token is rejected before the SSE stream starts. This is what
+    makes mounting the SSE tools above on a network transport safe — org_id/
+    user_id for every tool call come from this verified token, not from a
+    caller-supplied argument.
     """
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
     auth_header = headers.get("authorization", "")
@@ -243,3 +200,203 @@ async def mcp_with_auth(scope, receive, send) -> None:
         await mcp_app(scope, receive, send)
     finally:
         mcp_auth.reset(token)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STDIO tools/resources — explicit org_id/user_id/persona_id args, checked
+# via _load_owned_capsule. Local-trust only (see module docstring).
+# ─────────────────────────────────────────────────────────────────────────
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _capsule_to_markdown(persona_name: str, capsule_data: dict) -> str:
+    """Render a persona capsule as markdown with YAML front-matter."""
+    front_matter = {
+        "persona_name": persona_name,
+        "language": capsule_data.get("language", {}),
+        "hard_rules": capsule_data.get("hard_rules", {}),
+        "rhythm": capsule_data.get("rhythm", []),
+        "hinglish_patterns": capsule_data.get("hinglish_patterns", []),
+    }
+    lines = [
+        "---",
+        yaml.safe_dump(front_matter, sort_keys=False),
+        "---",
+        "",
+        "## Voice",
+        capsule_data.get("voice_description", "").strip(),
+        "",
+    ]
+    anchors = capsule_data.get("anchors", [])[:6]
+    if anchors:
+        lines.append("## Examples")
+        for a in anchors:
+            if a.get("in"):
+                lines.append(f"- IN:  {a['in']}")
+            if a.get("out"):
+                lines.append(f"  OUT: {a['out']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+async def _scoped_session(org_id: str) -> AsyncSession:
+    """Open a transaction pinned to one org for RLS."""
+    session = AsyncSessionLocal()
+    await set_org_context(session, org_id)
+    return session
+
+
+async def _load_owned_capsule(
+    org_id: str, persona_id: str, user_id: str
+) -> tuple[Persona, PersonaCapsule] | None:
+    """Load a persona's latest capsule iff `user_id` owns it in `org_id`.
+
+    Returns None uniformly for not-found, deleted, and not-owned so callers
+    never learn whether a persona exists outside their own org/ownership.
+    """
+    if not (_is_uuid(org_id) and _is_uuid(persona_id) and _is_uuid(user_id)):
+        return None
+    async with _scoped_session(org_id) as session:
+        persona = await session.get(Persona, persona_id)
+        if persona is None or persona.deleted_at is not None:
+            return None
+        if str(persona.user_id) != user_id:
+            return None
+        capsule = (
+            await session.execute(
+                select(PersonaCapsule)
+                .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
+                .order_by(PersonaCapsule.version.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if capsule is None:
+            return None
+        return persona, capsule
+
+
+@mcp.resource("persona://{org_id}/{user_id}/{persona_id}")
+async def get_persona(org_id: str, user_id: str, persona_id: str) -> str:
+    """Return the full persona capsule as a markdown resource, owner-only."""
+    result = await _load_owned_capsule(org_id, persona_id, user_id)
+    if result is None:
+        return "# Persona not found\n\nCapture some writing first."
+    persona, capsule = result
+    return _capsule_to_markdown(persona.name, capsule.capsule_data)
+
+
+@mcp.resource("persona://{org_id}/{user_id}/{persona_id}/exemplars")
+async def get_exemplars(org_id: str, user_id: str, persona_id: str) -> str:
+    """Return the top style exemplars for the persona, owner-only."""
+    result = await _load_owned_capsule(org_id, persona_id, user_id)
+    if result is None:
+        return "No persona or capsule found."
+    _, capsule = result
+    anchors = capsule.capsule_data.get("anchors", [])[:8]
+    if not anchors:
+        return "No exemplars yet."
+    return "\n\n---\n\n".join(
+        f"IN:  {a.get('in', '')}\nOUT: {a.get('out', '')}"
+        for a in anchors
+        if a.get("in")
+    )
+
+
+@mcp.tool()
+async def vachan_search_kb(
+    org_id: str,
+    persona_id: str,
+    user_id: str,
+    query: str,
+    top_k: int = 3,
+) -> str:
+    """Search the persona knowledge base. Call only when you need a fact."""
+    # KB tables (persona_kb_entries) are Phase 1 scaffolding. Until they exist,
+    # return a transparent placeholder so hosts can still test the tool schema.
+    result = await _load_owned_capsule(org_id, persona_id, user_id)
+    if result is None:
+        return "Persona not found."
+    return (
+        f"KB search stub for '{query}' on persona {persona_id}.\n"
+        "No KB entries yet — implement app/kb/retrieval.py and wire it here."
+    )
+
+
+@mcp.tool()
+async def vachan_render_in_persona(
+    org_id: str,
+    persona_id: str,
+    user_id: str,
+    neutral_draft: str,
+    channel: str = "chat",
+) -> str:
+    """
+    Rewrite a neutral draft in this persona's voice (FD-8 render_in_persona).
+
+    # TODO FD-11: this re-fetches the capsule from Postgres on every call.
+    # Fine for stdio/local use; a DB round-trip per turn will blow the
+    # <800ms voice latency budget once this is called from a voice agent.
+    # Wire the Redis hot-capsule cache FD-11 specifies before that happens.
+    """
+    result = await _load_owned_capsule(org_id, persona_id, user_id)
+    if result is None:
+        return "Persona not found."
+    _, capsule = result
+    register = get_register(channel)
+    capsule_data = apply_register(capsule.capsule_data, register)
+    reply, _used_fallback = await render_reply(
+        capsule_data,
+        user_message=neutral_draft,
+        history=[],
+        register=register,
+    )
+    return reply
+
+
+@mcp.tool()
+async def vachan_score_fidelity(
+    org_id: str,
+    persona_id: str,
+    user_id: str,
+    text: str,
+    channel: str = "chat",
+) -> dict[str, Any]:
+    """
+    Score how well a piece of text matches the persona (FD-8 score_fidelity).
+    Returns `warming_up: true` instead of a bare number when the capsule has
+    under 700 words of evidence (FD-4) — never present a thin clone's score
+    as trustworthy.
+
+    # TODO FD-11: same re-fetch-per-call cost as vachan_render_in_persona above.
+    """
+    result = await _load_owned_capsule(org_id, persona_id, user_id)
+    if result is None:
+        return {"error": "Persona not found"}
+    persona, capsule = result
+    if persona.status == "warming_up":
+        return {"warming_up": True, "confidence_band": "warming_up"}
+    register = get_register(channel)
+    capsule_data = apply_register(capsule.capsule_data, register)
+    score = await score_reply(capsule_data, text, channel=register.name)
+    return {
+        "pfs_score": score.pfs,
+        "pfs_basis": score.pfs_basis,
+        "confidence_band": capsule.capsule_data.get("band"),
+        "signals": {
+            "av_cosine": score.av_cosine,
+            "judge_score": score.judge_score,
+            "hard_rule_pass": score.hard_rule_pass,
+        },
+    }
+
+
+if __name__ == "__main__":
+    # Stdio transport for local MCP hosts (Claude Desktop, etc.).
+    mcp.run(transport="stdio")

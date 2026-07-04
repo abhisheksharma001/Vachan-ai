@@ -11,6 +11,9 @@ WHAT IT CATCHES
    IN_PHONE, UPI_ID, AADHAAR_ADJACENT, PAN, IFSC  (patterns from PRD §12).
 2. Everything Presidio's predefined recognizers catch (email, credit card, IP,
    and — weakly — person names via spaCy NER) as defense-in-depth.
+3. Preview-only extras (NOT stored): possessive location phrases
+   ("mere ghar", "tere vaha") so the pre-capture preview visibly differs when
+   private references are present.
 
 Per FD-12: name NER on Indian names is WEAK; we do NOT treat it as foolproof.
 Structured PII (high-precision) is the guarantee; GLiNER for names is a planned
@@ -25,6 +28,7 @@ actually redacts.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -199,3 +203,47 @@ def sanitize_structured(text: str) -> SanitizationResult:
     The real exposure (numbers, handles, cards) is still removed.
     """
     return sanitize(text, entities=list(C.PII_STRUCTURED_ENTITIES))
+
+
+# Preview-only: catch possessive references to private places without destroying
+# the Hinglish style of the stored observation log.
+_LOCATION_RE = re.compile(
+    r"\b(?:mere|meri|tere|teri|is|us|apne|hamare|aapke|inke|unki|inki) "
+    r"(?:ghar|vaha|yaha|office|kamre|room|flat|gali|colony|society|gaon|"
+    r"sheher|city|area|jagah)\b",
+    re.IGNORECASE,
+)
+
+
+def sanitize_preview(text: str) -> SanitizationResult:
+    """
+    User-facing pre-capture redaction preview.
+
+    Runs the structured sanitizer (phone/UPI/Aadhaar/PAN/IFSC/email/card) AND
+    adds a deterministic rule for possessive location phrases ("mere vaha",
+    "tera ghar") so the preview visibly changes when private references are
+    present. We deliberately SKIP Presidio's spaCy NER here because it mislabels
+    common Hinglish words as names/organizations and would shred the style
+    signal in the preview. The stored observations use `sanitize_structured`,
+    which keeps the style intact while guaranteeing structured PII is removed.
+    """
+    base = sanitize_structured(text)
+
+    # Add location phrases that don't overlap with already-redacted spans.
+    base_spans = [(s, e) for _, s, e in base.entities]
+    extra: list[tuple[str, int, int]] = []
+    for m in _LOCATION_RE.finditer(text):
+        if all(m.end() <= s or m.start() >= e for s, e in base_spans):
+            extra.append(("IN_LOCATION", m.start(), m.end()))
+
+    merged = sorted(list(base.entities) + extra, key=lambda x: x[2], reverse=True)
+    redacted = text
+    for typ, start, end in merged:
+        redacted = f"{redacted[:start]}[{typ}]{redacted[end:]}"
+
+    entity_list = sorted(
+        ((t, s, e) for t, s, e in (base.entities + extra)), key=lambda x: x[1]
+    )
+    return SanitizationResult(
+        text=redacted, entities=entity_list, found=bool(entity_list)
+    )

@@ -13,13 +13,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import constants as C
 from app.core.auth import AuthContext, get_current_auth
+from app.core.cache import TTLCache
 from app.core.db import org_scoped_session
+from app.core.pii import sanitize_preview
+from app.core.ids import ensure_uuid
 from app.models.tables import (
     Consent,
     Conversation,
@@ -37,13 +39,68 @@ from app.tone.ingest import run_capture
 from app.tone.registers import apply_register, get_register
 from app.tone.renderer import render_reply
 from app.voice.kb import build_voice_kb
+from app.kb.extraction import extract_signature, draft_capsule_from_signature
 
 router = APIRouter(prefix="/personas", tags=["personas"])
+
+# In-process cache for the active persona capsule. Keyed by org + persona.
+# TTL keeps us from re-reading the same capsule/rules from Postgres on every turn.
+_capsule_cache: TTLCache[dict] = TTLCache(60.0)
+
+
+async def _load_chat_capsule(
+    session: AsyncSession, persona_id: str, auth: AuthContext
+) -> tuple[dict, Any, int]:
+    """Return (capsule_data, fingerprint_vector, version) for a chat turn.
+
+    Uses a short-lived in-process cache so the same capsule/rules are not fetched
+    from the database on every message. Invalidates automatically when the
+    persona's current_capsule_version changes.
+    """
+    persona = await _load_owned_persona(session, persona_id, auth)
+    cache_key = f"capsule:{auth.org_id}:{persona_id}"
+
+    cached = _capsule_cache.get(cache_key)
+    if cached and cached.get("version") == persona.current_capsule_version:
+        return cached["data"], cached["fingerprint"], cached["version"]
+
+    # Version mismatch or not cached — load the active capsule.
+    stmt = (
+        select(PersonaCapsule)
+        .where(PersonaCapsule.persona_id == persona_id)
+        .where(PersonaCapsule.deleted_at.is_(None))
+    )
+    if persona.current_capsule_version is not None:
+        stmt = stmt.where(PersonaCapsule.version == persona.current_capsule_version)
+    else:
+        stmt = stmt.order_by(PersonaCapsule.version.desc())
+    capsule = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    if capsule is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This persona has no capsule yet — capture some writing first.",
+        )
+
+    _capsule_cache.set(
+        cache_key,
+        {
+            "version": capsule.version,
+            "data": capsule.capsule_data,
+            "fingerprint": capsule.fingerprint_vector,
+        },
+    )
+    return capsule.capsule_data, capsule.fingerprint_vector, capsule.version
 
 
 class CreatePersonaRequest(BaseModel):
     name: str = Field(..., description="A label for this voice, e.g. 'My WhatsApp self'")
     language_primary: str = Field("hi-en", description="Primary language mix")
+
+
+class UpdatePersonaRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, description="New label for this voice")
+    language_primary: str | None = Field(None, min_length=1, description="Primary language mix")
 
 
 class CaptureRequest(BaseModel):
@@ -81,6 +138,24 @@ class ChatRequest(BaseModel):
     tone: ToneOverride | None = Field(
         None, description="Live Tonality Slider overrides for this turn"
     )
+    is_correction: bool = Field(
+        False, description="If true, this message is a correction and should not receive a reply."
+    )
+
+
+class ExtractSignatureRequest(BaseModel):
+    turns: list[str] = Field(..., description="The target person's own messages")
+
+
+class SanitizePreviewRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Raw writing to preview redaction on")
+
+
+class SanitizePreviewResponse(BaseModel):
+    original: str
+    sanitized: str
+    found: bool
+    entities: list[tuple[str, int, int]] = Field(default_factory=list)
 
 
 async def _ensure_tenant(session: AsyncSession, auth: AuthContext) -> None:
@@ -120,6 +195,23 @@ async def _resolve_consent(session: AsyncSession, persona: Persona) -> str:
     return str(consent.id)
 
 
+async def _load_owned_persona(
+    session: AsyncSession, persona_id: str, auth: AuthContext
+) -> Persona:
+    """Load a persona the caller owns and hasn't deleted, or raise 404/403.
+
+    Every single-persona endpoint must route through this: org-scoped RLS
+    only proves the persona is in the caller's org, not that it's theirs.
+    """
+    ensure_uuid(persona_id, detail="Persona not found.")
+    persona = await session.get(Persona, persona_id)
+    if persona is None or persona.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Persona not found.")
+    if str(persona.user_id) != auth.user_id:
+        raise HTTPException(status_code=403, detail="You can only access personas you own.")
+    return persona
+
+
 async def _record_turn(
     session: AsyncSession,
     *,
@@ -132,53 +224,48 @@ async def _record_turn(
     pfs_score: float | None,
 ) -> None:
     """
-    Get-or-create the conversation ATOMICALLY (UNIQUE index on
-    persona_id+user_id, migration 0003) and append both turns.
+    Append both turns to the MOST RECENT conversation for this persona+user,
+    creating one if none exists yet.
 
-    Web-only Phase 0 — Conversation.channel is the TRANSPORT channel ('web'),
-    never body.channel (that's the tone REGISTER — chat/english/email/voice —
-    a different axis; conflating the two would store a register value where
-    a transport value belongs).
-
-    ON CONFLICT DO UPDATE, not select-then-insert: two concurrent chat
-    requests for the same persona+user now resolve to the SAME row instead of
-    forking into two conversations (CTO review, item 3).
+    Multiple conversations per persona+user are an intentional part of the
+    data model (app.api.conversations lets a user start fresh threads), so
+    this deliberately does NOT enforce a unique (persona_id, user_id)
+    conversation — it just keeps the Mirror's running chat session logged
+    without getting in the way of that. Web-only Phase 0 — Conversation.
+    channel is the TRANSPORT channel ('web'), never body.channel (that's the
+    tone REGISTER — chat/english/email/voice — a different axis).
     """
-    stmt = (
-        pg_insert(Conversation)
-        .values(
-            org_id=org_id,
-            user_id=user_id,
-            persona_id=persona_id,
-            capsule_version=capsule_version,
-            channel=C.CHANNEL_WEB,
+    convo = (
+        await session.execute(
+            select(Conversation)
+            .where(Conversation.persona_id == persona_id)
+            .where(Conversation.user_id == user_id)
+            .order_by(Conversation.last_active_at.desc())
+            .limit(1)
         )
-        .on_conflict_do_update(
-            index_elements=[Conversation.persona_id, Conversation.user_id],
-            set_={"last_active_at": func.now()},
+    ).scalar_one_or_none()
+    if convo is None:
+        convo = Conversation(
+            org_id=org_id, user_id=user_id, persona_id=persona_id,
+            capsule_version=capsule_version, channel=C.CHANNEL_WEB,
         )
-        .returning(Conversation.id, Conversation.turn_count, Conversation.avg_pfs_score)
-    )
-    convo_id, base, avg_prior = (await session.execute(stmt)).one()
+        session.add(convo)
+        await session.flush()
 
-    session.add(Message(
-        org_id=org_id, conversation_id=convo_id,
-        turn_number=base + 1, role="user", content=user_message,
-    ))
-    session.add(Message(
-        org_id=org_id, conversation_id=convo_id,
-        turn_number=base + 2, role="assistant", content=reply, pfs_score=pfs_score,
-    ))
-
-    new_avg = avg_prior
+    base = convo.turn_count
+    session.add(Message(org_id=org_id, conversation_id=convo.id,
+                         turn_number=base + 1, role="user", content=user_message))
+    session.add(Message(org_id=org_id, conversation_id=convo.id,
+                         turn_number=base + 2, role="assistant",
+                         content=reply, pfs_score=pfs_score))
+    convo.turn_count = base + 2
+    convo.last_active_at = func.now()
     if pfs_score is not None:
-        prior_n = base // 2  # completed exchanges before this one
-        new_avg = pfs_score if avg_prior is None else (avg_prior * prior_n + pfs_score) / (prior_n + 1)
-    await session.execute(
-        update(Conversation)
-        .where(Conversation.id == convo_id)
-        .values(turn_count=Conversation.turn_count + 2, avg_pfs_score=new_avg)
-    )
+        prior_n = base // 2
+        convo.avg_pfs_score = (
+            pfs_score if convo.avg_pfs_score is None
+            else (convo.avg_pfs_score * prior_n + pfs_score) / (prior_n + 1)
+        )
 
 
 @router.post("", status_code=201)
@@ -211,6 +298,111 @@ async def create_persona(
         }
 
 
+@router.get("")
+async def list_personas(
+    auth: AuthContext = Depends(get_current_auth),
+) -> list[dict]:
+    """List the caller's personas with a live observation count."""
+    async with org_scoped_session(auth.org_id) as session:
+        obs_count = (
+            select(func.count(PersonaObservation.id))
+            .where(PersonaObservation.persona_id == Persona.id)
+            .where(PersonaObservation.deleted_at.is_(None))
+            .correlate(Persona)
+            .scalar_subquery()
+        )
+        rows = (
+            await session.execute(
+                select(
+                    Persona.id,
+                    Persona.name,
+                    Persona.status,
+                    Persona.language_primary,
+                    Persona.current_capsule_version,
+                    Persona.created_at,
+                    obs_count.label("observations_count"),
+                )
+                .where(Persona.user_id == auth.user_id)
+                .where(Persona.deleted_at.is_(None))
+                .order_by(Persona.created_at.desc())
+            )
+        ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "status": r.status,
+            "language_primary": r.language_primary,
+            "current_capsule_version": r.current_capsule_version,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "observations_count": int(r.observations_count),
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/{persona_id}")
+async def update_persona(
+    persona_id: str,
+    body: UpdatePersonaRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Rename or change the primary language of a persona you own."""
+    async with org_scoped_session(auth.org_id) as session:
+        persona = await _load_owned_persona(session, persona_id, auth)
+
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            raise HTTPException(status_code=400, detail="No fields provided to update.")
+        for key, value in updates.items():
+            setattr(persona, key, value)
+
+    return {
+        "persona_id": persona_id,
+        "name": persona.name,
+        "status": persona.status,
+        "language_primary": persona.language_primary,
+        "current_capsule_version": persona.current_capsule_version,
+    }
+
+
+@router.delete("/{persona_id}")
+async def delete_persona(
+    persona_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Soft-delete a persona and its observations + capsules."""
+    async with org_scoped_session(auth.org_id) as session:
+        await _load_owned_persona(session, persona_id, auth)
+
+        # The append-only tables permit UPDATE only during an erasure workflow.
+        await session.execute(text("SET LOCAL app.allow_erasure = 'on'"))
+
+        await session.execute(
+            update(PersonaObservation)
+            .where(PersonaObservation.persona_id == persona_id)
+            .where(PersonaObservation.deleted_at.is_(None))
+            .values(deleted_at=func.now())
+        )
+        await session.execute(
+            update(PersonaCapsule)
+            .where(PersonaCapsule.persona_id == persona_id)
+            .where(PersonaCapsule.deleted_at.is_(None))
+            .values(deleted_at=func.now())
+        )
+        deleted_at = (
+            await session.execute(
+                update(Persona)
+                .where(Persona.id == persona_id)
+                .values(deleted_at=func.now())
+                .returning(Persona.deleted_at)
+            )
+        ).scalar_one()
+
+    return {"persona_id": persona_id, "deleted_at": deleted_at.isoformat()}
+
+
 @router.post("/{persona_id}/capture")
 async def capture_writing(
     persona_id: str,
@@ -219,11 +411,7 @@ async def capture_writing(
 ) -> dict:
     # Validate the persona is ours and resolve its consent.
     async with org_scoped_session(auth.org_id) as session:
-        persona = (
-            await session.execute(select(Persona).where(Persona.id == persona_id))
-        ).scalar_one_or_none()
-        if persona is None:
-            raise HTTPException(status_code=404, detail="Persona not found.")
+        persona = await _load_owned_persona(session, persona_id, auth)
         consent_id = await _resolve_consent(session, persona)
 
     result = await run_capture(
@@ -259,11 +447,7 @@ async def get_persona(
     auth: AuthContext = Depends(get_current_auth),
 ) -> dict:
     async with org_scoped_session(auth.org_id) as session:
-        persona = (
-            await session.execute(select(Persona).where(Persona.id == persona_id))
-        ).scalar_one_or_none()
-        if persona is None:
-            raise HTTPException(status_code=404, detail="Persona not found.")
+        persona = await _load_owned_persona(session, persona_id, auth)
 
         O = PersonaObservation
         row = (
@@ -312,10 +496,12 @@ async def get_capsule(
 ) -> dict:
     """Return the latest persona capsule (capsule_data + rendered persona.md)."""
     async with org_scoped_session(auth.org_id) as session:
+        await _load_owned_persona(session, persona_id, auth)
         capsule = (
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
@@ -339,15 +525,12 @@ async def get_voice_kb(
     (Vapi/Retell/LiveKit). Vachan supplies the voice + guardrails; the platform
     runs the mic, STT and TTS. Returns a paste-ready system prompt + guidelines."""
     async with org_scoped_session(auth.org_id) as session:
-        persona = (
-            await session.execute(select(Persona).where(Persona.id == persona_id))
-        ).scalar_one_or_none()
-        if persona is None:
-            raise HTTPException(status_code=404, detail="Persona not found.")
+        persona = await _load_owned_persona(session, persona_id, auth)
         capsule = (
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
@@ -369,29 +552,28 @@ async def chat_with_clone(
     """
     The Mirror: chat with your clone. Synchronous (interactive) — loads the
     latest capsule and replies in the persona's voice (Path A renderer).
+
+    Correction messages are accepted but do not generate a reply, so the user
+    can steer the conversation without breaking its flow. Nothing is persisted
+    here — this endpoint is stateless (the client resends `history` on each
+    turn), so a correction only affects the client's own next request.
     """
     async with org_scoped_session(auth.org_id) as session:
-        capsule = (
-            await session.execute(
-                select(PersonaCapsule)
-                .where(PersonaCapsule.persona_id == persona_id)
-                .order_by(PersonaCapsule.version.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-    if capsule is None:
-        raise HTTPException(
-            status_code=409,
-            detail="This persona has no capsule yet — capture some writing first.",
+        if body.is_correction:
+            # Still verify the caller owns this persona before acknowledging.
+            await _load_owned_persona(session, persona_id, auth)
+            return {
+                "persona_id": persona_id,
+                "reply": "",
+                "correction_received": True,
+            }
+
+        capsule_data, fingerprint, version = await _load_chat_capsule(
+            session, persona_id, auth
         )
-    # The stored neural fingerprint (centroid). Read it off now while the row is
-    # loaded; it's the zero placeholder for capsules built before Slice 1.5 or
-    # without the model installed, which fidelity_signals() detects and skips.
-    fingerprint = capsule.fingerprint_vector
 
     # Apply live slider overrides to a COPY of the capsule (never mutate the
     # stored version): the same steered view drives BOTH generation and scoring.
-    capsule_data = capsule.capsule_data
     if body.tone is not None:
         lang = {**capsule_data.get("language", {})}
         if body.tone.formality is not None:
@@ -407,7 +589,7 @@ async def chat_with_clone(
     register = get_register(body.channel)
     capsule_data = apply_register(capsule_data, register)
 
-    reply = await render_reply(
+    reply, used_fallback = await render_reply(
         capsule_data,
         body.message,
         history=[t.model_dump() for t in body.history],
@@ -415,17 +597,20 @@ async def chat_with_clone(
     )
     response = {
         "persona_id": persona_id,
-        "capsule_version": capsule.version,
+        "capsule_version": version,
         "band": capsule_data.get("band"),
         "channel": register.name,
         "reply": reply,
+        "degraded": used_fallback,
     }
     # Score the reply so the Mirror can show the Fidelity Ring (doc 03 §3.5).
     # The neural fingerprint (Slice 1.5) gives the two style signals; when it's
     # the zero placeholder / model missing, both come back None and PFS stays
     # PROVISIONAL (judge-only), clearly flagged. With a real centroid, the full
     # composite activates (pfs_basis="full").
-    if body.score:
+    # Skip scoring on a fallback reply — it's templated filler, not real model
+    # output, so a fidelity number would misrepresent the persona's actual voice.
+    if body.score and not used_fallback:
         # Score against the channel's reference centroid(s): english is graded
         # against the BEST of [Hinglish, English] style centroids (English-to-
         # English when that's closer), every other channel against the main one.
@@ -449,9 +634,55 @@ async def chat_with_clone(
             org_id=auth.org_id,
             user_id=auth.user_id,
             persona_id=persona_id,
-            capsule_version=capsule.version,
+            capsule_version=version,
             user_message=body.message,
             reply=reply,
             pfs_score=response.get("fidelity", {}).get("pfs"),
         )
     return response
+
+
+@router.post("/{persona_id}/extract-signature")
+async def extract_persona_signature(
+    persona_id: str,
+    body: ExtractSignatureRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict:
+    """Analyze the target person's turns and return a draft persona signature."""
+    async with org_scoped_session(auth.org_id) as session:
+        persona = await _load_owned_persona(session, persona_id, auth)
+
+    signature = extract_signature(body.turns, person_name=persona.name)
+    draft = None
+    draft_error = None
+    try:
+        draft = await draft_capsule_from_signature(signature, persona.name)
+    except Exception as exc:
+        draft_error = f"Draft generation failed: {exc}"
+    return {
+        "persona_id": persona_id,
+        "confidence": signature.confidence,
+        "signature": signature.as_dict(),
+        "draft_capsule": draft,
+        "draft_error": draft_error,
+    }
+
+
+@router.post("/sanitize-preview")
+async def preview_sanitization(
+    body: SanitizePreviewRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> SanitizePreviewResponse:
+    """Return a user-facing redaction preview without storing anything.
+
+    The preview is stricter than what we store (it also masks possessive
+    location phrases like 'mere vaha') so users can see private references
+    disappear before they click 'Capture'.
+    """
+    result = sanitize_preview(body.text)
+    return SanitizePreviewResponse(
+        original=body.text,
+        sanitized=result.text,
+        found=result.found,
+        entities=result.entities,
+    )

@@ -4,14 +4,22 @@ CTO review, item 3 — Mirror turn persistence.
 Before this fix, /personas/{id}/chat never wrote to conversations/messages;
 there was no turn history, no PFS trend, no drift forensics. Requires docker
 postgres + redis (like test_pipeline / test_capsule).
+
+NOTE (merge with origin/main, 2026-07-04): main's app.api.conversations
+already lets a user start MULTIPLE conversations with the same persona
+(list_conversations returns a list; create_conversation has no dedup check).
+So _record_turn deliberately does NOT enforce a unique (persona_id, user_id)
+conversation — the original unique-index fix (migration 0003) was dropped as
+incompatible with that data model. Two concurrent chat requests CAN still
+create two conversation rows; that's accepted, not a regression introduced
+here — it's the same tolerance main's own create_conversation already has.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 
-import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.core.auth import issue_dev_token
 from app.core.db import org_scoped_session
@@ -47,39 +55,31 @@ async def test_chat_writes_conversation_and_message_rows(monkeypatch):
                           json={"message": "kaisa hai sab", "score": False})
 
     async with org_scoped_session(org_id) as session:
-        from sqlalchemy import select
-
         convo = (await session.execute(
             select(Conversation).where(Conversation.persona_id == pid)
         )).scalar_one()
         assert convo.turn_count == 2  # user turn + assistant turn persisted
 
 
-async def test_concurrent_chats_do_not_fork_conversation(monkeypatch):
-    """The bug the unique index (migration 0003) + ON CONFLICT fix: two
-    simultaneous chat requests for the same persona+user must resolve to ONE
-    conversation row, not two."""
+async def test_chat_reuses_most_recent_conversation_across_turns(monkeypatch):
+    """Two sequential chat calls for the same persona+user append to the SAME
+    conversation (most-recent-or-create), not a fresh one each time."""
     monkeypatch.setattr(capsule_mod, "gateway_status", lambda: "unconfigured")
     org_id, user_id = str(uuid.uuid4()), str(uuid.uuid4())
     client, headers = _client_and_headers(org_id, user_id)
     async with client:
         pid = (await client.post("/personas", headers=headers,
-                                 json={"name": "Race test"})).json()["persona_id"]
+                                 json={"name": "Sequential test"})).json()["persona_id"]
         await client.post(f"/personas/{pid}/capture", headers=headers,
                           json={"source_type": "paste", "text": _PASTE})
-
-        await asyncio.gather(
-            client.post(f"/personas/{pid}/chat", headers=headers,
-                       json={"message": "message one", "score": False}),
-            client.post(f"/personas/{pid}/chat", headers=headers,
-                       json={"message": "message two", "score": False}),
-        )
+        await client.post(f"/personas/{pid}/chat", headers=headers,
+                          json={"message": "message one", "score": False})
+        await client.post(f"/personas/{pid}/chat", headers=headers,
+                          json={"message": "message two", "score": False})
 
     async with org_scoped_session(org_id) as session:
-        from sqlalchemy import select
-
         rows = (await session.execute(
             select(Conversation).where(Conversation.persona_id == pid)
         )).scalars().all()
-        assert len(rows) == 1          # one conversation, not two
-        assert rows[0].turn_count == 4  # both exchanges landed on it
+        assert len(rows) == 1
+        assert rows[0].turn_count == 4

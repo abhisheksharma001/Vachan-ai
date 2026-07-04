@@ -56,6 +56,19 @@ def test_clean_strips_reasoning():
     assert renderer._clean('"just a quoted reply"') == "just a quoted reply"
 
 
+@pytest.mark.asyncio
+async def test_render_reply_falls_back_on_llm_failure(monkeypatch):
+    """If the configured provider fails (auth/rate-limit), return a deterministic reply."""
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(renderer, "complete_with_alias", _boom)
+    reply, used_fallback = await renderer.render_reply(_CAPSULE, "hi bhai")
+    assert reply and len(reply) > 0
+    assert "as an ai" not in reply.lower()
+    assert used_fallback is True
+
+
 @pytest.mark.skipif(
     not get_settings().GROQ_API_KEY,
     reason="GROQ_API_KEY not set — skipping live renderer call",
@@ -107,3 +120,32 @@ async def test_mirror_chat_replies_in_voice_live():
                                      "tone": {"formality": 0.9, "hinglish": 0.1}})
         assert r2.status_code == 200, r2.text
         assert len(r2.json()["reply"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_chat_correction_does_not_reply():
+    """A correction message is accepted but produces no clone reply."""
+    org_id, user_id = str(uuid.uuid4()), str(uuid.uuid4())
+    email = f"corr-{uuid.uuid4().hex[:8]}@example.test"
+    token = issue_dev_token(user_id=user_id, org_id=org_id, email=email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    from app.main import app
+
+    sample = "haan bhai bilkul ho jayega\n\nscene yeh hai ki frontend pe kaam baaki hai"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        pid = (await client.post("/personas", headers=headers,
+                                 json={"name": "Corr"})).json()["persona_id"]
+        await client.post(f"/personas/{pid}/capture", headers=headers,
+                          json={"source_type": "paste", "text": sample})
+
+        r = await client.post(
+            f"/personas/{pid}/chat",
+            headers=headers,
+            json={"message": "say it more casually", "is_correction": True},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["reply"] == ""
+        assert body.get("correction_received") is True
+        assert "fidelity" not in body

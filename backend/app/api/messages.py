@@ -13,7 +13,7 @@ GET /messages/{idempotency_key}
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,9 @@ from app.channels import queue
 from app.channels.contract import InboundMessage
 from app.core import constants as C
 from app.core.auth import AuthContext, get_current_auth
+from app.core.db import org_scoped_session
+from app.core.ids import ensure_uuid
+from app.models.tables import Persona
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -43,6 +46,20 @@ async def ingest_message(
     body: IngressRequest,
     auth: AuthContext = Depends(get_current_auth),
 ) -> JSONResponse:
+    # RLS only proves persona_id is in the caller's org; without this check any
+    # user in the org could enqueue messages against another user's persona,
+    # polluting that persona's observations with content its owner never wrote.
+    ensure_uuid(body.persona_id, detail="Persona not found.")
+    async with org_scoped_session(auth.org_id) as session:
+        persona = await session.get(Persona, body.persona_id)
+        if persona is None or persona.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Persona not found.")
+        if str(persona.user_id) != auth.user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only message personas you own.",
+            )
+
     # Build the normalized contract. tenant_id comes from the token (trusted).
     kwargs = dict(
         tenant_id=auth.org_id,

@@ -1,4 +1,4 @@
-"""Model Context Protocol server for Vachan.ai."""
+"""MCP server exposing Vachan persona resources and tools (stdio + SSE)."""
 from __future__ import annotations
 
 from app.mcp.server import mcp, mcp_app, mcp_with_auth

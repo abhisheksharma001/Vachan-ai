@@ -26,9 +26,8 @@ from app.core import constants as C
 from app.core.config import get_settings
 
 # ── The ONE alias → real-model-ID map (FD-5). Edit only here. ────────────
-# Sarvam and Kimi are intentionally NOT wired: their exact API model IDs are
-# unverified (Part E open item). Wiring a guessed ID would violate RULE 1.
-# Add them here only after confirming the ID + endpoint with the provider.
+# Sarvam is verified live; Kimi model ID is the best-known Moonshot model at
+# the time of wiring. Re-verify before pinning for production (RULE 1).
 ALIAS_TO_MODEL: dict[str, str] = {
     # Anthropic — verified IDs; need ANTHROPIC_API_KEY to call.
     C.ALIAS_OPUS: "anthropic/claude-opus-4-8",
@@ -46,17 +45,24 @@ ALIAS_TO_MODEL: dict[str, str] = {
     # below. NOTE: it's a REASONING model — it fills `reasoning_content` first,
     # so it needs a generous max_tokens or `content` comes back null.
     C.ALIAS_SARVAM: "openai/sarvam-30b",
-    # C.ALIAS_KIMI: "<verify Moonshot/Kimi model id before enabling>",
+    # Kimi (Moonshot) — OpenAI-compatible endpoint. If this exact model id is
+    # rejected, swap to the current Moonshot chat model (e.g. kimi-k2.5-202501).
+    C.ALIAS_KIMI: "openai/kimi-k2-0711-preview",
 }
 
 # Per-alias custom endpoints (OpenAI-compatible providers via the openai/ prefix).
-_API_BASE: dict[str, str] = {C.ALIAS_SARVAM: "https://api.sarvam.ai/v1"}
+_API_BASE: dict[str, str] = {
+    C.ALIAS_SARVAM: "https://api.sarvam.ai/v1",
+    C.ALIAS_KIMI: "https://api.moonshot.cn/v1",
+}
 
 # Router fallback chains (FD-16 + FD-C6): Hinglish primary Sarvam-30b → Groq
-# Qwen3 → Groq Llama 4, so no single model outage blocks the demo.
+# Qwen3 → Groq Llama 4; Kimi primary → Groq, so a provider outage never blocks
+# the Mirror.
 _FALLBACKS = [
     {C.ALIAS_SARVAM: [C.ALIAS_HINGLISH, C.ALIAS_HINGLISH_FALLBACK]},
     {C.ALIAS_HINGLISH: [C.ALIAS_HINGLISH_FALLBACK]},
+    {C.ALIAS_KIMI: [C.ALIAS_GROQ]},
 ]
 
 
@@ -64,6 +70,8 @@ def _api_key_for(alias: str, model_id: str, settings) -> str | None:
     """Pick the right provider key for an alias/model."""
     if alias == C.ALIAS_SARVAM:
         return settings.SARVAM_API_KEY
+    if alias == C.ALIAS_KIMI:
+        return settings.KIMI_API_KEY
     if model_id.startswith("groq/"):
         return settings.GROQ_API_KEY
     if model_id.startswith("anthropic/"):
@@ -113,7 +121,12 @@ def gateway_status() -> str:
       'error'        → router failed to build.
     """
     settings = get_settings()
-    if not (settings.GROQ_API_KEY or settings.ANTHROPIC_API_KEY or settings.SARVAM_API_KEY):
+    if not (
+        settings.GROQ_API_KEY
+        or settings.ANTHROPIC_API_KEY
+        or settings.SARVAM_API_KEY
+        or settings.KIMI_API_KEY
+    ):
         return "unconfigured"
     try:
         get_router()

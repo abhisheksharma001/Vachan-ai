@@ -109,6 +109,7 @@ class Persona(Base):
     # are reflected in `status`, not here).
     current_capsule_version: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = _created_at()
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PersonaObservation(Base):
