@@ -553,10 +553,14 @@ async def chat_with_clone(
     The Mirror: chat with your clone. Synchronous (interactive) — loads the
     latest capsule and replies in the persona's voice (Path A renderer).
 
-    Correction messages are accepted but do not generate a reply, so the user
-    can steer the conversation without breaking its flow. Nothing is persisted
-    here — this endpoint is stateless (the client resends `history` on each
-    turn), so a correction only affects the client's own next request.
+    Persistence: every normal turn IS stored — user message + reply land in
+    the conversation log via _record_turn (after the LLM call, so no DB
+    transaction spans a render). Generation context, however, is stateless:
+    the reply is built only from the capsule + the `history` the client
+    resends each turn, never from the stored log.
+
+    Correction messages are accepted but do not generate a reply and are NOT
+    persisted, so a correction only affects the client's own next request.
     """
     async with org_scoped_session(auth.org_id) as session:
         if body.is_correction:
