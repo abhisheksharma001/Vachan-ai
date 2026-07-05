@@ -10,6 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +62,22 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENV == "production"
+
+    @model_validator(mode="after")
+    def _require_full_provider_config(self) -> "Settings":
+        # JWKS alone isn't enough: jwt.decode() silently SKIPS the aud/iss
+        # check when passed None. A shared IdP (one JWKS URL serving many
+        # apps/tenants) would then accept a signature-valid token minted for
+        # a completely different audience. Fail at boot, not on request 1.
+        if self.AUTH_MODE == "provider" and not (
+            self.AUTH_JWKS_URL and self.AUTH_ISSUER and self.AUTH_AUDIENCE
+        ):
+            raise ValueError(
+                "AUTH_MODE=provider requires AUTH_JWKS_URL, AUTH_ISSUER, and "
+                "AUTH_AUDIENCE all set — partial config would silently skip "
+                "issuer/audience verification on every token."
+            )
+        return self
 
 
 @lru_cache
