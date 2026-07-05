@@ -1,0 +1,134 @@
+{
+  "project": "Vachan.ai",
+  "branchName": "ralph/ui-refinement",
+  "description": "UI Refinement - fix 7 verified frontend inconsistencies/gaps, refine (not replace) the existing Sandy+Coral design system, then a final cross-app visual QA pass.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add a skip-to-content link",
+      "description": "As a keyboard/screen-reader user, I want to skip the sidebar nav and jump straight to page content, so I don't have to tab through navigation on every page.",
+      "acceptanceCriteria": [
+        "A visually-hidden-until-focused 'Skip to main content' link is the first focusable element in frontend/app/(app)/layout.tsx",
+        "The <main> element has id=\"main-content\" and tabIndex={-1}",
+        "Activating the skip link moves keyboard focus to <main>",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill (tab from page load, confirm skip link appears and works)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Delete the orphaned app/theme.css",
+      "description": "As a maintainer, I want dead duplicate token definitions removed, so there's one source of truth for the design system.",
+      "acceptanceCriteria": [
+        "Confirm (grep across frontend/app and frontend/components) that nothing imports frontend/app/theme.css",
+        "Delete frontend/app/theme.css",
+        "globals.css remains the sole token source; visual output unchanged",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Add motion/duration design tokens",
+      "description": "As a maintainer, I want duration values defined once as tokens, so components stop hardcoding raw numerals.",
+      "acceptanceCriteria": [
+        "Add --duration-fast: 100ms, --duration-base: 200ms, --duration-slow: 500ms to the @theme block in frontend/app/globals.css (values match what's already hardcoded, so nothing visually shifts)",
+        "Migrate frontend/components/ui/dialog.tsx and dropdown-menu.tsx (currently duration-100) to the new duration-fast token utility",
+        "Migrate frontend/components/vachan/AppSidebar.tsx (currently duration-200) to duration-base",
+        "Migrate frontend/components/vachan/FidelityRing.tsx (currently duration-500) to duration-slow",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill (sidebar hover/active transitions and fidelity ring animation look unchanged)"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Delete confirmed-orphaned components",
+      "description": "As a maintainer, I want dead code removed, so the component directory reflects what's actually used.",
+      "acceptanceCriteria": [
+        "Re-confirm zero importers (grep across frontend/app and frontend/components) for PersonaList.tsx, QuickActions.tsx, FidelityRingMini.tsx before deleting",
+        "Delete frontend/components/vachan/PersonaList.tsx, QuickActions.tsx, FidelityRingMini.tsx",
+        "cd frontend && npm run build passes (proves nothing referenced them)",
+        "cd frontend && npm run lint passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Give /settings real content",
+      "description": "As a user, I want the Settings page to show something useful instead of a placeholder, so it's not a dead end.",
+      "acceptanceCriteria": [
+        "frontend/app/(app)/settings/page.tsx uses the existing usePersonas hook to show a real persona summary list, using existing PersonaCard/EmptyState components",
+        "Includes a simple account/identity section using data already available client-side (no new backend endpoints)",
+        "Matches existing design tokens (sand/coral/ink) and the shared (app) layout",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Bring /channels into the shared layout and navigation",
+      "description": "As a user, I want to reach the Channels page from the sidebar like every other page, and have it look consistent with the rest of the app.",
+      "acceptanceCriteria": [
+        "Move frontend/app/channels/page.tsx into the (app) route group (frontend/app/(app)/channels/page.tsx) so it inherits AppSidebar and the shared layout",
+        "Add a 'Channels' entry (with an appropriate lucide icon) to AppSidebar's NAV array in frontend/components/vachan/AppSidebar.tsx",
+        "Remove the page's own hand-rolled nav bar and its page.module.css file; restyle ChannelStatusGrid/export cards with existing Tailwind/shadcn classes (sand/coral/ink tokens) instead of CSS Modules",
+        "Existing content (channel list, export options) is preserved, only restyled and properly reachable",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill (Channels reachable from sidebar, visually consistent with Dashboard/Personas pages)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Tokenize FidelityRing's hardcoded gradient colors",
+      "description": "As a maintainer, I want the fidelity ring's gradient built from design tokens, not magic hex strings, so the color system has one source of truth.",
+      "acceptanceCriteria": [
+        "Add --color-coral-200: #F3C9A8 to the @theme block in globals.css, fitting the existing coral-300/400/500 scale",
+        "frontend/components/vachan/FidelityRing.tsx's SVG gradient stops reference the coral-200/coral-500 tokens instead of hardcoded hex literals",
+        "Visual appearance is pixel-identical before/after (same hex values, just tokenized)",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Final cross-app visual QA pass",
+      "description": "As a maintainer, I want to confirm nothing regressed across the whole app after the above changes.",
+      "acceptanceCriteria": [
+        "Walk through in browser: marketing home, marketing open-source page, dashboard, personas list + detail, conversations list + detail, mirror, settings, channels",
+        "Screenshot each page",
+        "Fix any real visual regression found during this pass (not hypothetical ones) — if none found, note that explicitly as a valid outcome",
+        "cd frontend && npm run build passes",
+        "cd frontend && npm run lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
