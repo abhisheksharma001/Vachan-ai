@@ -14,9 +14,12 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select, text, update
 
-from app.core.auth import issue_dev_token
+from app.core.auth import issue_dev_token, verify_token
 from app.core.config import get_settings
+from app.core.db import org_scoped_session
+from app.models.tables import PersonaCapsule
 from app.tone import capsule as capsule_mod
 
 _PASTE = (
@@ -93,6 +96,90 @@ async def test_collapse_band_does_not_promote_capsule(monkeypatch):
 
         persona = (await client.get(f"/personas/{pid}", headers=headers)).json()
         assert persona["current_capsule_version"] == 1  # still v1
+
+
+async def test_recapture_ignores_soft_deleted_previous_capsule(monkeypatch):
+    """A previous capsule's row can be soft-deleted (delete_persona's erasure
+    flow sets deleted_at on every PersonaCapsule for that persona). If a later
+    build_capsule call ever runs again for that persona_id, it must not treat
+    a soft-deleted row as 'prev' for anchors/drift — but version numbering
+    must still skip past it (uq_capsule_persona_version doesn't care about
+    deleted_at, so reusing its version number would IntegrityError on insert).
+    Simulate by soft-deleting v1 directly, then re-running build_capsule the
+    way capture_writing does."""
+    monkeypatch.setattr(capsule_mod, "gateway_status", lambda: "unconfigured")
+    client, headers = _client_and_headers()
+    async with client:
+        r = await client.post("/personas", headers=headers, json={"name": "Erasure test"})
+        pid = r.json()["persona_id"]
+        await client.post(f"/personas/{pid}/capture", headers=headers,
+                           json={"source_type": "paste", "text": _PASTE})
+        # Pull org_id straight from the token so we can call build_capsule
+        # directly (bypassing the owner-check that would otherwise make this
+        # scenario unreachable through the API — see finding #1's write-up).
+        auth = verify_token(headers["Authorization"].removeprefix("Bearer "))
+
+        async with org_scoped_session(auth.org_id) as session:
+            v1 = (await session.execute(
+                select(PersonaCapsule).where(PersonaCapsule.persona_id == pid)
+            )).scalar_one()
+            consent_id = str(v1.consent_ref)
+            # persona_capsules is append-only (DB trigger); soft-delete is only
+            # permitted through the same erasure gate delete_persona uses.
+            await session.execute(text("SET LOCAL app.allow_erasure = 'on'"))
+            await session.execute(
+                update(PersonaCapsule)
+                .where(PersonaCapsule.id == v1.id)
+                .values(deleted_at=func.now())
+            )
+
+        v2 = await capsule_mod.build_capsule(
+            org_id=auth.org_id,
+            persona_id=pid,
+            consent_id=consent_id,
+            sanitized_exemplars=["ek aur naya message"],
+        )
+        # prev was soft-deleted → no drift comparison against the erased row,
+        # but version numbering still advances past it (2, not a collision
+        # with the soft-deleted v1 row).
+        assert v2["version"] == 2
+        assert v2["drift"]["vs_version"] is None
+
+
+async def test_enrich_skips_mismatched_out_of_brand_count(monkeypatch):
+    """_llm_enrich must not zip a shorter/longer out_of_brand list against
+    anchors positionally — that silently pairs the wrong OUT example with an
+    IN anchor. A count mismatch should leave the deterministic fallback OUT
+    values untouched instead of guessing."""
+    monkeypatch.setattr(capsule_mod, "gateway_status", lambda: "connected")
+
+    class _FakeMessage:
+        content = '{"voice_description": "x", "rhythm": [], "hinglish_patterns": [], ' \
+                   '"out_of_brand": ["only one"]}'  # 1 item, but 2 anchors below
+
+    class _FakeChoice:
+        message = _FakeMessage()
+
+    class _FakeResp:
+        choices = [_FakeChoice()]
+
+    async def _fake_complete(*args, **kwargs):
+        return _FakeResp()
+
+    monkeypatch.setattr(capsule_mod, "complete_with_alias", _fake_complete)
+
+    capsule = {
+        "anchors": [
+            {"in": "anchor one", "out": "generic one"},
+            {"in": "anchor two", "out": "generic two"},
+        ],
+        "enriched": False,
+    }
+    await capsule_mod._llm_enrich(capsule, {"cmi": 0.1, "formality": 0.5, "avg_sentence_len": 5.0}, ["anchor one", "anchor two"])
+
+    # Mismatched count (1 vs 2) → overrides skipped, originals preserved.
+    assert capsule["anchors"][0]["out"] == "generic one"
+    assert capsule["anchors"][1]["out"] == "generic two"
 
 
 @pytest.mark.skipif(

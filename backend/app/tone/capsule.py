@@ -206,8 +206,11 @@ async def _llm_enrich(capsule: dict, stats: dict, anchors: list[str]) -> None:
         if isinstance(data.get("hinglish_patterns"), list):
             capsule["hinglish_patterns"] = [str(x) for x in data["hinglish_patterns"]][:6]
         outs = data.get("out_of_brand")
-        if isinstance(outs, list):
-            for anchor, out in zip(capsule["anchors"], outs):
+        # Only apply if the LLM returned one entry per anchor, in order — a
+        # mismatched count means position no longer maps to the same anchor,
+        # and a silent wrong pairing is worse than keeping the generic fallback.
+        if isinstance(outs, list) and len(outs) == len(capsule["anchors"]):
+            for anchor, out in zip(capsule["anchors"], outs, strict=True):
                 if str(out).strip():
                     anchor["out"] = str(out).strip()
         capsule["enriched"] = True
@@ -310,16 +313,27 @@ async def build_capsule(
         ).scalar_one()
         stats = await _history_stats(session, persona_id)
 
+        # "prev" (for anchors/drift comparison) is the latest LIVE capsule —
+        # a soft-deleted one must not resurrect erased anchors or be diffed
+        # against. But next_version must be based on the highest version
+        # EVER used (deleted or not): uq_capsule_persona_version doesn't know
+        # about deleted_at, so restarting numbering from a soft-deleted row's
+        # old version would collide with it on insert.
         prev = (
             await session.execute(
                 select(PersonaCapsule)
                 .where(PersonaCapsule.persona_id == persona_id)
+                .where(PersonaCapsule.deleted_at.is_(None))
                 .order_by(PersonaCapsule.version.desc())
                 .limit(1)
             )
         ).scalar_one_or_none()
+        max_version = await session.scalar(
+            select(func.max(PersonaCapsule.version))
+            .where(PersonaCapsule.persona_id == persona_id)
+        )
         prior_anchors = [a["in"] for a in (prev.capsule_data.get("anchors", []) if prev else [])]
-        next_version = (prev.version + 1) if prev else 1
+        next_version = (max_version or 0) + 1
 
         anchors = _select_anchors(sanitized_exemplars, prior_anchors)
         batch_agg = aggregate_features(sanitized_exemplars)
