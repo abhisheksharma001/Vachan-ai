@@ -1,0 +1,101 @@
+.outer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 24px;
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  background: var(--sand-100);
+  border: 1px solid var(--sand-300);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 40px;
+  overflow: hidden;
+}
+@media (min-width: 768px) {
+  .card {
+    padding: 48px;
+  }
+}
+
+.shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(246, 169, 142, 0.08) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+  pointer-events: none;
+}
+
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 20px;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 32px;
+  color: var(--ink-900);
+}
+
+.step {
+  font-size: 17px;
+  color: var(--ink-700);
+  min-height: 28px;
+}
+
+.track {
+  width: 100%;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--sand-300);
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  background: var(--blend-warm);
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
+.band {
+  margin-top: 8px;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+  }
+  .bar {
+    transition: none;
+  }
+}

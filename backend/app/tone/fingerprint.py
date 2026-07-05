@@ -70,6 +70,23 @@ def embedder_available() -> bool:
     return _load_model() is not None
 
 
+def assert_model_loaded() -> None:
+    """
+    Fail LOUDLY if the neural fingerprint isn't available. NOT a health check
+    (loading is ~1GB and blocking — never call this from /health or CI, same
+    rule as app.core.llm.smoke_completion). Run explicitly before enabling the
+    collapse gate in a real deployment: without this model, drift_band() reads
+    "unknown" for every capsule and the merge gate (capsule.py) never fires.
+    """
+    if not embedder_available():
+        raise RuntimeError(
+            "Neural fingerprint model unavailable (StyleDistance/mstyledistance "
+            "failed to load). The collapse-gate merge protection in capsule.py "
+            "is currently a silent no-op — every drift band reads 'unknown'. "
+            "Do not treat the merge gate as active until this passes."
+        )
+
+
 # ── pure vector helpers (no model needed — unit-testable on their own) ────
 def is_zero_vector(vec) -> bool:
     """A capsule with the [0.0]*768 PLACEHOLDER fingerprint (no neural signal

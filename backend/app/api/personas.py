@@ -11,6 +11,8 @@ modelling needs a DPDP consent, so creating a persona records one.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
@@ -24,6 +26,8 @@ from app.core.pii import sanitize_preview
 from app.core.ids import ensure_uuid
 from app.models.tables import (
     Consent,
+    Conversation,
+    Message,
     Org,
     Persona,
     PersonaCapsule,
@@ -208,6 +212,80 @@ async def _load_owned_persona(
     if str(persona.user_id) != auth.user_id:
         raise HTTPException(status_code=403, detail="You can only access personas you own.")
     return persona
+
+
+async def _record_turn(
+    session: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    persona_id: str,
+    capsule_version: int,
+    user_message: str,
+    reply: str,
+    pfs_score: float | None,
+) -> None:
+    """
+    Append both turns to the MOST RECENT conversation for this persona+user,
+    creating one if none exists yet.
+
+    Multiple conversations per persona+user are an intentional part of the
+    data model (app.api.conversations lets a user start fresh threads), so
+    this deliberately does NOT enforce a unique (persona_id, user_id)
+    conversation — it just keeps the Mirror's running chat session logged
+    without getting in the way of that. Web-only Phase 0 — Conversation.
+    channel is the TRANSPORT channel ('web'), never body.channel (that's the
+    tone REGISTER — chat/english/email/voice — a different axis).
+    """
+    # Row-lock the conversation so two concurrent chats can't both read the
+    # same turn_count and write duplicate turn_numbers. Deliberately NOT
+    # filtered by capsule_version: a conversation anchors the version it
+    # STARTED on (see create_conversation); re-capturing mid-thread must not
+    # silently fork the Mirror's running session into a new conversation.
+    convo = (
+        await session.execute(
+            select(Conversation)
+            .where(Conversation.persona_id == persona_id)
+            .where(Conversation.user_id == user_id)
+            .order_by(Conversation.last_active_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if convo is None:
+        convo = Conversation(
+            org_id=org_id, user_id=user_id, persona_id=persona_id,
+            capsule_version=capsule_version, channel=C.CHANNEL_WEB,
+        )
+        session.add(convo)
+        await session.flush()
+
+    base = convo.turn_count
+    session.add(Message(org_id=org_id, conversation_id=convo.id,
+                         turn_number=base + 1, role="user", content=user_message))
+    session.add(Message(org_id=org_id, conversation_id=convo.id,
+                         turn_number=base + 2, role="assistant",
+                         content=reply, pfs_score=pfs_score))
+    convo.turn_count = base + 2
+    convo.last_active_at = func.now()
+    if pfs_score is not None:
+        if convo.avg_pfs_score is None:
+            convo.avg_pfs_score = pfs_score
+        else:
+            # Weight by turns that actually CARRIED a score — unscored turns
+            # (score=false, fallback replies) must not dilute the average.
+            scored_n = (
+                await session.scalar(
+                    select(func.count(Message.id))
+                    .where(Message.conversation_id == convo.id)
+                    .where(Message.role == "assistant")
+                    .where(Message.pfs_score.is_not(None))
+                )
+                or 0
+            )
+            convo.avg_pfs_score = (
+                convo.avg_pfs_score * scored_n + pfs_score
+            ) / (scored_n + 1)
 
 
 @router.post("", status_code=201)
@@ -495,10 +573,14 @@ async def chat_with_clone(
     The Mirror: chat with your clone. Synchronous (interactive) — loads the
     latest capsule and replies in the persona's voice (Path A renderer).
 
-    Correction messages are accepted but do not generate a reply, so the user
-    can steer the conversation without breaking its flow. Nothing is persisted
-    here — this endpoint is stateless (the client resends `history` on each
-    turn), so a correction only affects the client's own next request.
+    Persistence: every normal turn IS stored — user message + reply land in
+    the conversation log via _record_turn (after the LLM call, so no DB
+    transaction spans a render). Generation context, however, is stateless:
+    the reply is built only from the capsule + the `history` the client
+    resends each turn, never from the stored log.
+
+    Correction messages are accepted but do not generate a reply and are NOT
+    persisted, so a correction only affects the client's own next request.
     """
     async with org_scoped_session(auth.org_id) as session:
         if body.is_correction:
@@ -567,6 +649,20 @@ async def chat_with_clone(
                 centroid_distance=centroid_distance,
             )
         ).as_dict()
+
+    # Persist the turn AFTER the (slow) render/score calls complete — never
+    # hold a DB transaction open across an LLM call (same rule as ingress).
+    async with org_scoped_session(auth.org_id) as session:
+        await _record_turn(
+            session,
+            org_id=auth.org_id,
+            user_id=auth.user_id,
+            persona_id=persona_id,
+            capsule_version=version,
+            user_message=body.message,
+            reply=reply,
+            pfs_score=response.get("fidelity", {}).get("pfs"),
+        )
     return response
 
 

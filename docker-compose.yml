@@ -16,7 +16,10 @@ services:
       POSTGRES_PASSWORD: vachan
       POSTGRES_DB: vachan
     ports:
-      - "${DB_PORT:-5433}:5432"
+      # Default 5432 matches the app's config defaults and existing .env files.
+      # If a system Postgres already owns 5432, compose fails loudly at bind —
+      # set DB_PORT in the root .env (compose reads it) and update DATABASE_URL.
+      - "${DB_PORT:-5432}:5432"
     # Named volume (not a bind mount): `docker compose down -v` truly wipes it,
     # so the DB really resets from scratch when you want a clean slate.
     volumes:
@@ -30,7 +33,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "${REDIS_PORT:-6380}:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:

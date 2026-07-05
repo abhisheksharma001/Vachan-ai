@@ -183,7 +183,7 @@ export default function DashboardPage() {
               Mirror
             </Link>
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai"
+              href="https://github.com/abhisheksharma001/Vachan-ai"
               target="_blank"
               rel="noreferrer"
               className={buttonVariants({ variant: "outline" })}
@@ -192,7 +192,7 @@ export default function DashboardPage() {
               GitHub
             </a>
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai/tree/main/docs"
+              href="https://github.com/abhisheksharma001/Vachan-ai/tree/main/docs"
               target="_blank"
               rel="noreferrer"
               className={buttonVariants({ variant: "outline" })}

@@ -113,13 +113,14 @@ CMI_CONFORMANCE_TOLERANCE = 0.05
 # ════════════════════════════════════════════════════════════════════
 # PERSONA FIDELITY SCORE — PFS  (doc 03 §3.5 — "does it sound like them?")
 # ════════════════════════════════════════════════════════════════════
-# Three ORTHOGONAL signals, combined; never trust one alone. The weights are
-# FD-locked from the composite:
-#     PFS = 0.5*AV_cosine + 0.2*(1 - centroid_distance) + 0.3*(judge/5)
-# AV_cosine + centroid_distance are NEURAL (mStyleDistance) and land in Slice
-# 1.5. Until then PFS runs PROVISIONAL from the judge alone (renormalized) and
-# is flagged `pfs_basis="judge_only"` — we never fabricate a cosine we can't
-# measure (RULE 5).
+# TWO-signal composite, not three orthogonal ones (corrected 2026-07-04):
+# centroid_distance = 1 - AV_cosine, same geometry. Effective formula:
+#     PFS = 0.7*AV_cosine + 0.3*(judge/5)
+# NOTE: CENTROID and AV_COSINE are not independent — same geometry. Kept as
+# three constants only so compute_pfs()'s signature doesn't need to change;
+# PFS_WEIGHT_AV_COSINE + PFS_WEIGHT_CENTROID always sum to the true cosine
+# weight (0.7). Until Slice 1.5's fingerprint is live everywhere, PFS runs
+# PROVISIONAL from the judge alone, flagged `pfs_basis="judge_only"`.
 PFS_WEIGHT_AV_COSINE = 0.5
 PFS_WEIGHT_CENTROID = 0.2
 PFS_WEIGHT_JUDGE = 0.3

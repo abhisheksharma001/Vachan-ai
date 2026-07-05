@@ -1,0 +1,18 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-500);
+  margin-top: 16px;
+}
+
+.icon {
+  display: inline-flex;
+  color: var(--teal-500);
+}
+
+.highlight {
+  color: var(--coral-700);
+  font-weight: 500;
+}

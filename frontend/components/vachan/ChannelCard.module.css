@@ -1,0 +1,86 @@
+.card {
+  background: var(--sand-100);
+  border: 1px solid var(--sand-300);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
+  transition: box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.title {
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-500);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.connected {
+  background: var(--teal-500);
+}
+
+.setup_needed {
+  background: var(--amber-500);
+}
+
+.error {
+  background: var(--rose-600);
+}
+
+.unavailable {
+  background: var(--sand-400);
+}
+
+.note {
+  font-size: 13px;
+  color: var(--ink-500);
+  margin-bottom: 12px;
+}
+
+.action {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--coral-700);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--coral-600);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+  .card:hover {
+    transform: none;
+  }
+}

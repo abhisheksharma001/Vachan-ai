@@ -1,23 +1,25 @@
 """
 FIDELITY — Persona Fidelity Score (PFS), doc 03 §3.5: "does it sound like them?"
 
-Three ORTHOGONAL signals, never trusted alone (the heart of the eval loop):
+TWO-SIGNAL COMPOSITE, not three orthogonal ones — corrected 2026-07-04.
+centroid_distance = 1 - av_cosine (fingerprint.py fidelity_signals()): same
+geometry, not an independent measurement. So the formula is really:
 
-  (a) AV_cosine         — authorship-verification cosine vs the person's style
-                          centroid (mStyleDistance). NEURAL — lands in Slice 1.5.
-  (b) centroid_distance — the cheap continuous drift monitor, same embedding
-                          space. NEURAL — lands in Slice 1.5.
-  (c) judge / 5         — LLM-as-judge tone rubric, 1.0–5.0 + a one-sentence
-                          reason. LIVE NOW (cheap fast model).
-  (+) CMI conformance   — output CMI vs the capsule's cmi_target, within ±tol
-                          (FD-1), so the reply doesn't drift to pure English/Hindi.
-  (+) hard-rule regex   — banned corporate/AI phrases + emoji policy. Runs on
-                          100% of turns, sub-millisecond, never an LLM call.
+  (a) AV_cosine  — authorship-verification cosine vs the person's style
+                   centroid (mStyleDistance). NEURAL — lands in Slice 1.5.
+  (b) judge / 5  — LLM-as-judge tone rubric, 1.0–5.0 + a one-sentence
+                   reason. LIVE NOW (cheap fast model).
+  (+) CMI conformance / hard-rule regex — advisory/gating, not part of PFS itself.
 
-Composite (doc 03 §3.5):
-    PFS = 0.5*AV_cosine + 0.2*(1 - centroid_distance) + 0.3*(judge/5)
+Effective composite (AV_cosine and its complement folded to one weight):
+    PFS = 0.7*AV_cosine + 0.3*(judge/5)
 
-HONESTY (RULE 5): the two NEURAL signals are 0.7 of the weight and need the
+A real third orthogonal signal (e.g. char-n-gram authorship distance) is a
+scoring-formula change — Opus-ceiling per doc 03, not a quick fix. Track it,
+don't rush it. `pfs_basis` values ("full"/"judge_only") are UNCHANGED — this
+is a documentation fix, not a wire-format change.
+
+HONESTY (RULE 5): the cosine signal is 0.7 of the weight and needs the
 fingerprint that ships in Slice 1.5. Until then we compute a PROVISIONAL PFS
 from the judge alone (renormalized to 0..1) and flag `pfs_basis="judge_only"`.
 We never invent a cosine we cannot measure. When Slice 1.5 lands, pass
@@ -266,7 +268,8 @@ def compute_pfs(
     """
     Combine the signals into PFS (0..1).
 
-    FULL (Slice 1.5+): the doc formula with all three weights.
+    FULL (Slice 1.5+): effectively 0.7*av_cosine + 0.3*judge — centroid_distance
+    is 1-av_cosine, not an independent third signal (see module docstring).
     PROVISIONAL (now): only the judge is measurable, so renormalize its 0.3
     weight to 1.0 → PFS = judge/5, basis "judge_only". Honest, not fabricated.
     """

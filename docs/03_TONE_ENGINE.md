@@ -186,7 +186,12 @@ Three stacked mechanisms, in increasing ambition/cost:
 
 ## 3.5 FIDELITY SCORING — "does it actually sound like them?" (the heart of the loop)
 
-> Three *orthogonal* signals, combined. **Never trust one alone.** Feeds the eval gate (§2.3 step 9) and the merge gate (§3.7).
+> **Correction 2026-07-04:** implemented as a TWO-signal composite, not three
+> orthogonal ones — (b) below is `1 - (a)`, same geometry as (a), not an
+> independent measurement. Effective formula is `0.7*AV_cosine + 0.3*judge`.
+> A real third orthogonal signal (e.g. the PAN char-n-gram cosine in (a)) is
+> tracked, not shipped. **Never trust the cosine signal alone against the
+> judge.** Feeds the eval gate (§2.3 step 9) and the merge gate (§3.7).
 
 ### (a) Authorship-verification consistency (the gold metric)
 Frame it as: *"Would an authorship verifier believe this agent message and the person's real messages are the same author?"*

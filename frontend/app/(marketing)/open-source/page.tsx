@@ -20,7 +20,7 @@ export default function OpenSourcePage() {
           </p>
           <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai"
+              href="https://github.com/abhisheksharma001/Vachan-ai"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center justify-center gap-2 rounded-pill bg-coral-500 px-6 py-2.5 text-sm font-semibold text-sand-50 shadow-sm transition-colors hover:bg-coral-600"
@@ -81,7 +81,7 @@ export default function OpenSourcePage() {
           <h2 className="font-display text-ink-900 mb-8 text-center">Resources for contributors</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai"
+              href="https://github.com/abhisheksharma001/Vachan-ai"
               target="_blank"
               rel="noreferrer"
               className="group flex items-start gap-4 rounded-xl bg-sand-50 p-5 ring-1 ring-foreground/10 transition-shadow hover:shadow-md"
@@ -94,7 +94,7 @@ export default function OpenSourcePage() {
             </a>
 
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai/blob/main/CONTRIBUTING.md"
+              href="https://github.com/abhisheksharma001/Vachan-ai/blob/main/CONTRIBUTING.md"
               target="_blank"
               rel="noreferrer"
               className="group flex items-start gap-4 rounded-xl bg-sand-50 p-5 ring-1 ring-foreground/10 transition-shadow hover:shadow-md"
@@ -107,7 +107,7 @@ export default function OpenSourcePage() {
             </a>
 
             <a
-              href="https://github.com/abhisheksharma/Vachan.ai/blob/main/docs/02_ARCHITECTURE.md"
+              href="https://github.com/abhisheksharma001/Vachan-ai/blob/main/docs/02_ARCHITECTURE.md"
               target="_blank"
               rel="noreferrer"
               className="group flex items-start gap-4 rounded-xl bg-sand-50 p-5 ring-1 ring-foreground/10 transition-shadow hover:shadow-md"
@@ -130,7 +130,7 @@ export default function OpenSourcePage() {
             We are looking for contributors who care about voice AI, Indian languages, and privacy-first design.
           </p>
           <a
-            href="https://github.com/abhisheksharma/Vachan.ai/blob/main/CONTRIBUTING.md"
+            href="https://github.com/abhisheksharma001/Vachan-ai/blob/main/CONTRIBUTING.md"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center justify-center rounded-pill bg-coral-500 px-7 py-3 text-base font-semibold text-sand-50 shadow-md transition-colors hover:bg-coral-600"

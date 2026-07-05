@@ -103,7 +103,6 @@ export default function PersonasPage() {
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Work Alex"
                     disabled={createPersona.isPending}
-                    autoFocus
                   />
                 </div>
                 <div className="grid gap-2">

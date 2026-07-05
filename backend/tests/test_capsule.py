@@ -73,6 +73,28 @@ async def test_recapture_bumps_version(monkeypatch):
         assert v2["capsule"]["version"] == 2
 
 
+async def test_collapse_band_does_not_promote_capsule(monkeypatch):
+    """Merge gate (CTO review, item 1): a 'collapse' drift band must store the
+    version (append-only, for human review) but NOT advance current_capsule_version."""
+    monkeypatch.setattr(capsule_mod, "gateway_status", lambda: "unconfigured")
+    client, headers = _client_and_headers()
+    async with client:
+        pid = (await client.post("/personas", headers=headers,
+                                 json={"name": "Collapse test"})).json()["persona_id"]
+        await client.post(f"/personas/{pid}/capture", headers=headers,
+                          json={"source_type": "paste", "text": _PASTE})
+
+        monkeypatch.setattr(capsule_mod, "drift_band", lambda cosine: "collapse")
+        v2 = (await client.post(f"/personas/{pid}/capture", headers=headers,
+                                json={"source_type": "paste", "text": "totally alien text"})).json()
+
+        assert v2["capsule"]["version"] == 2       # row stored, append-only
+        assert v2["capsule"]["promoted"] is False  # pointer did NOT move
+
+        persona = (await client.get(f"/personas/{pid}", headers=headers)).json()
+        assert persona["current_capsule_version"] == 1  # still v1
+
+
 @pytest.mark.skipif(
     not get_settings().GROQ_API_KEY,
     reason="GROQ_API_KEY not set — skipping live capsule enrichment",

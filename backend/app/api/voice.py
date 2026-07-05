@@ -7,6 +7,7 @@ persona resource as a system message and expose the `vachan_search_kb` tool.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -46,6 +47,18 @@ class BurstRequest(BaseModel):
     max_words: int = Field(25, ge=1, le=200)
 
 
+def _parse_tool_args(raw: str | None) -> dict | None:
+    """Model-generated tool arguments. Malformed JSON or a non-object payload
+    returns None so the caller skips that tool call instead of 500ing the
+    voice turn — the model misformatting its own arguments is routine, not
+    exceptional."""
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 async def _load_capsule_for_voice(session: AsyncSession, persona_id: str, user_id: str):
     ensure_uuid(persona_id, detail="Persona not found.")
     persona = await session.get(Persona, persona_id)
@@ -53,15 +66,18 @@ async def _load_capsule_for_voice(session: AsyncSession, persona_id: str, user_i
         raise HTTPException(status_code=404, detail="Persona not found.")
     if str(persona.user_id) != user_id:
         raise HTTPException(status_code=403, detail="Persona not owned by caller.")
-    capsule = (
-        await session.execute(
-            select(PersonaCapsule)
-            .where(PersonaCapsule.persona_id == persona_id)
-            .where(PersonaCapsule.deleted_at.is_(None))
-            .order_by(PersonaCapsule.version.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    # ACTIVE capsule = promoted current_capsule_version when set (collapse-band
+    # capsules are stored but never promoted); latest only pre-first-promotion.
+    stmt = (
+        select(PersonaCapsule)
+        .where(PersonaCapsule.persona_id == persona_id)
+        .where(PersonaCapsule.deleted_at.is_(None))
+    )
+    if persona.current_capsule_version is not None:
+        stmt = stmt.where(PersonaCapsule.version == persona.current_capsule_version)
+    else:
+        stmt = stmt.order_by(PersonaCapsule.version.desc())
+    capsule = (await session.execute(stmt.limit(1))).scalar_one_or_none()
     if capsule is None:
         raise HTTPException(
             status_code=409,
@@ -77,7 +93,7 @@ async def vapi_chat_completions(
 ) -> dict:
     """Non-streaming custom LLM endpoint for Vapi with persona pre-load + KB tool."""
     async with org_scoped_session(auth.org_id) as session:
-        persona, capsule = await _load_capsule_for_voice(
+        _persona, capsule = await _load_capsule_for_voice(
             session, body.persona_id, auth.user_id
         )
 
@@ -120,52 +136,65 @@ async def vapi_chat_completions(
     response = await complete_with_alias(C.ALIAS_KIMI, messages=messages, **kwargs)
     msg = response.choices[0].message
 
-    # If the model wants KB facts, run the tool and re-call.
+    # If the model wants KB facts, run the tool and re-call. Only the tool
+    # calls we actually EXECUTED go back into the transcript — echoing a tool
+    # call with no matching tool result is a provider error on the re-call.
+    # Foreign (caller-supplied) tools are skipped, not executed: this bridge
+    # only knows how to run vachan_search_kb.
     if msg.tool_calls:
-        tool_messages = []
+        executed: list[tuple[Any, str]] = []
         for tc in msg.tool_calls:
-            if tc.function.name == "vachan_search_kb":
-                args = json.loads(tc.function.arguments or "{}")
-                result = await vachan_search_kb(
-                    org_id=auth.org_id,
-                    persona_id=body.persona_id,
-                    user_id=auth.user_id,
-                    query=args.get("query", ""),
-                    top_k=args.get("top_k", 3),
-                )
-                tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": tc.function.name,
-                        "content": result,
-                    }
-                )
-        messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
+            if tc.function.name != "vachan_search_kb":
+                continue
+            args = _parse_tool_args(tc.function.arguments)
+            if args is None:
+                continue  # malformed model output — skip, don't 500 the turn
+            result = await vachan_search_kb(
+                org_id=auth.org_id,
+                persona_id=body.persona_id,
+                user_id=auth.user_id,
+                query=args.get("query", ""),
+                top_k=args.get("top_k", 3),
+            )
+            executed.append((tc, result))
+
+        if executed:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc, _ in executed
+                    ],
+                }
+            )
+            messages.extend(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.function.name,
+                    "content": result,
+                }
+                for tc, result in executed
+            )
+            # Re-call without tools (we want a spoken answer now, not another
+            # tool round) and with the same None-filtered sampling params —
+            # a bare temperature=None is rejected by some OpenAI-compatible hosts.
+            final_kwargs = {
+                k: v for k, v in kwargs.items() if k not in ("tools", "tool_choice")
             }
-        )
-        messages.extend(tool_messages)
-        response = await complete_with_alias(
-            C.ALIAS_KIMI,
-            messages=messages,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-        )
-        msg = response.choices[0].message
+            response = await complete_with_alias(
+                C.ALIAS_KIMI, messages=messages, **final_kwargs
+            )
+            msg = response.choices[0].message
 
     return {
         "id": getattr(response, "id", "vachan-0"),
